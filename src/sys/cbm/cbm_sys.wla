@@ -1,0 +1,154 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+; cbm_sys.wla : hardware abstraction layer for CBM systems
+;===============================================================================
+; all systems have to define these `sys_*` constants and routines, so that the
+; main ZSheet code doesn't have to have variations for every different system;
+; these are:
+;
+;       SYS_SPC         native character code for space
+;       SYS_RETURN      native character code for newline
+;       SYS_0           native character code for "0"
+;       SYS_9           native character code for "9"
+;       
+;       sys_chr2asc     convert native character encoding to ASCII
+;       sys_asc2chr     convert ASCII to native character encoding
+;       
+;       sys_chrout      print a character using the native encoding
+;       sys_getkey      get a keypress from the user in the native encoding
+;
+.IFDEF  SYSTEM_C64
+        .INC    "sys/cbm/c64/c64_sys.wla"
+.ENDIF
+
+
+; in some instances, ZSheet will want to work with characters in the system's
+; own character encoding, rather than going through ASCII conversion. some
+; of the system's native character codes are exposed via these constants:
+;===============================================================================
+.DEF    SYS_SPC     PET_SPC     ; space
+.DEF    SYS_RETURN  PET_RETURN  ; newline
+.DEF    SYS_0       PET_0       ; "0"
+.DEF    SYS_9       PET_9       ; "9"
+.DEF    SYS_QUOTE   PET_QUOTE   ; quote-mark (for strings)
+
+
+sys_chr2asc:
+;===============================================================================
+; convert a PETSCII character code to ASCII:
+;
+; TODO: use a lookup-table for ROM-version?
+;       (would require preserving Y)
+;
+; in:   A       character code
+;
+; out:  A       character code, converted  
+;       X, Y    (preserved)
+;
+;-------------------------------------------------------------------------------
+        ; is the character in the PETSCII upper-case range?
+        ; note that the "case bit" in PETSCII is %10000000,
+        ; not %00100000 as in ASCII
+        ;
+        cmp # PET_A_UP          ; "A" and above?
+        bcc +                   ; no -- skip ahead
+        cmp # PET_Z_UP+1        ; "Z" and below?
+        bcs +                   ; no -- skip ahead
+
+        ; adjust PETSCII upper-case $C1..$DA down to ASCII upper-case $41..$5A
+        ; NOTE: carry is clear, so this subtracts an additional 1 for us!
+        sbc # $80-1
+        rts
+        
+        ; is the character in the PETSCII lower-case range?
+        ;
++       cmp # PET_A_LO          ; "a" and above?
+        bcc +                   ; no -- exit
+        cmp # PET_Z_LO+1        ; "z" and below?
+        bcs +                   ; no -- exit
+
+        ; adjust PETSCII lower-case $41..$5A
+        ; up to ASCII lower-case $61..$7A
+        adc # $20
+
++       rts
+
+
+sys_asc2chr:
+;===============================================================================
+; convert an ASCII character code to the system's native encoding:
+; for Commodore machines, this is PETSCII
+;
+; TODO: use a lookup-table for ROM-version?
+;       (would require preserving Y)
+;
+; in:   A       character code
+;
+; out:  A       character code, converted  
+;       X, Y    (preserved)
+;
+;-------------------------------------------------------------------------------
+        ; is the character in the ASCII lower-case range?
+        ;
+        cmp # $61               ; "a" and above?
+        bcc +                   ; no -- skip ahead
+        cmp # $7a+1             ; "z" and below?
+        bcs +                   ; no -- skip ahead
+
+        ; adjust ASCII lower-case $61..$7A down to PETSCII lower-case $41..$5A
+        ; NOTE: carry is clear, so this subtracts an additional 1 for us!
+        sbc # $20-1
+        rts
+        
+        ; is the character in the ASCII upper-case range?
+        ;
++       cmp # $41               ; "A" and above?
+        bcc +                   ; no -- exit
+        cmp # $5a+1             ; "z" and below?
+        bcs +                   ; no -- exit
+
+        ; adjust ASCII upper-case $41..$5A
+        ; up to PETSCII upper-case $C1..$DA
+        adc # $80
+
++       rts
+
+
+sys_getkey      = KERNAL_CHRIN
+;===============================================================================
+; get a character of input from the user, in the native encoding:
+;
+; out:  A       character code in the native encoding
+;       X, Y    (clobbered)
+;
+; NOTE: for CBM-systems, we don't need to wrap this, call the KERNAL directly
+;-------------------------------------------------------------------------------
+
+
+;;sys_input:
+;;;=============================================================================
+;;; wait for the user to type a line of text:
+;;; the input is stored on the system's input line-buffer
+;;;
+;;;-----------------------------------------------------------------------------
+;;        ; reset the input-buffer, intialising it with nulls,
+;;        ; and rewinding the cursor to the beginning
+;;        ;
+;;        jsr channel_input_init  ; NOTE: sets Y to zero for us
+;;
+;;-       jsr sys_getkey          ; read a character from the keyboard
+;;        cmp # PET_RETURN        ; is the key RETURN?
+;;        beq +                   ; if yes, quit reading
+;;        
+;;        jsr sys_chr2asc         ; convert the native encoding to ASCII
+;;        jsr channel_input_write ; add the ASCII-code to the buffer
+;;        cpy # INPUT_LENGTH      ; have we hit the end of the line?
+;;        bne -
+;;
+;;        ;---------------------------------------------------------------------
+;;+       jsr sys_chrout          ; actually print the RETURN (go to next line)
+;;        
+;;        ; rewind the input channel for parasing
+;;        jmp channel_input_rewind

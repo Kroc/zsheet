@@ -1,0 +1,103 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+.DEF    NUL             0
+.DEF    LO              0
+.DEF    HI              1
+
+; import machine-specific headers:
+;-------------------------------------------------------------------------------
+.IFDEF  SYSTEM_CBM
+        .INC    "sys/cbm/cbm.wla"
+.ENDIF
+.IFDEF  CPU_65XX
+        ; macros for 6502-based systems (6502, 6510, 65C02)
+        ; to polyfill differences in instruction sets
+        .INC    "sys/cpu_65xx.wla"
+.ENDIF
+
+.DEF    ZS_COLS_MAX          256
+.DEF    ZS_COL_WIDTH_MIN     2
+.DEF    ZS_COL_WIDTH_MAX     32
+.DEF    ZS_ROWS_MAX          999
+
+;===============================================================================
+; RAM variables:
+;===============================================================================
+.RAMSECTION "ZP_ADDR"   SLOT "ZP"       RETURNORG
+        ;-----------------------------------------------------------------------
+        ; a temporary address available for indirect addressing
+        zp_addr         WORD
+        ; an index for walking bytes
+        zp_index        BYTE
+        ; output value
+        zp_word         WORD
+.ENDS
+
+.INC    "print.wla"             ; screen output
+
+.INC    "rc.wla"
+.INC    "draw.wla"
+
+.RAMSECTION "ZP_CURSOR" SLOT "ZP"       RETURNORG
+        ;-----------------------------------------------------------------------
+        ; current scroll offset of the window
+        zp_window       INSTANCEOF Rc
+        ; current cursor position
+        zp_cursor       INSTANCEOF Rc
+.ENDS
+
+; zsheet initialisation:
+;===============================================================================
+zsheet_init:
+        lda # VIC_CYAN
+        sta VIC_BORDER
+        lda # VIC_BLUE
+        sta VIC_BACKGROUND
+
+        jsr print_this
+            .BYTE   PET_CYAN, PET_CASE_LO, PET_CLEAR
+            .BYTE   NUL
+
+.IFDEF  SYSTEM_C64
+.ENDASM
+        ;///////////////////////////////////////////////////////////////////////
+        ; prepare KERNAL for loading
+        ;
+        ldx ZP_KERNAL_DEV       ; last-used KERNAL device number
+        bne +                   ; not 0? good
+        ldx # DEV_DRV8          ; default to drive 8
++       ldy # $01               ; use PRG-provided load-address
+        tya                     ; logical file number
+        jsr KERNAL_SETLFS
+
+        ldx #< @filename
+        ldy #> @filename
+        lda # 6                 ; A is string-length
+        jsr KERNAL_SETNAM       ; set KERNAL file name
+
+        lda # $00               ; load, not verify
+        jsr KERNAL_LOAD
+
+        bcc +
+
+-       inc VIC_BORDER
+        jmp -
+.ASM
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
+
+        lda # 0
+        sta zp_window.col
+        sta zp_window.row+LO
+        sta zp_window.row+HI
+
+        sta zp_cursor.col
+        sta zp_cursor.row+LO
+        sta zp_cursor.row+HI
+
+        jsr draw_screen
+-       jmp -
+
+@filename:
+        .ASC    "font", 0

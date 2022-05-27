@@ -1,0 +1,134 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+; cpu_65xx.wla : macros for 6502/6510/65C02
+;===============================================================================
+.DEF    CPU_VECTOR_NMI  $fffa   ; Non-Maskable-Interrupt vector
+.DEF    CPU_VECTOR_RST  $fffc   ; cold-reset vector
+.DEF    CPU_VECTOR_IRQ  $fffe   ; interrupt vector
+
+.DEF    CPU_BIT         $2c     ; opcode for `BIT $nnnn`
+.DEF    CPU_BIT_ZP      $24     ; opcode for `BIT $zp`
+.DEF    CPU_JSR         $20     ; opcode for `JSR $nnnn`
+.DEF    CPU_LDA         $a9     ; opcode for `LDA # $nn`
+.DEF    CPU_LDA_ZP      $a5     ; opcode for `LDA $zp`
+.DEF    CPU_LDA_ZPX     $b5     ; opcode for `LDA $zp, x`
+.DEF    CPU_LDA_ABS     $ad     ; opcode for `LDA $nnnn`
+.DEF    CPU_LDY         $a0     ; opcode for `LDY # $nn`
+.DEF    CPU_RTS         $60     ; opcode for `RTS`
+.DEF    CPU_BRK         $00     ; opcode for `BRK`
+
+.MACRO  clb                     ; "clear borrow"
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        sec
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+.MACRO  seb                     ; "set borrow"
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        clc
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+.RAMSECTION "ZP_REG"    SLOT "ZP"       RETURNORG
+        ;-----------------------------------------------------------------------
+        ; temporary locations for backing up registers;
+        ; cannot be nested, so should only be used within
+        ; routines that do not call any other routines
+        zp_a            BYTE
+        zp_x            BYTE
+        zp_y            BYTE
+.ENDS
+
+.MACRO  .phx                    ; macro to polyfill 65C02's PusH-X instruction
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+.IFDEF  CPU_65C02
+        ;///////////////////////////////////////////////////////////////////////
+        phx                     ; just as fast and only 1-byte
+.ELSE   ;///////////////////////////////////////////////////////////////////////
+        stx zp_x
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+.MACRO  .phy                    ; macro to polyfill 65C02's PusH-Y instruction
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+.IFDEF  CPU_65C02
+        ;///////////////////////////////////////////////////////////////////////
+        phy                     ; just as fast and only 1-byte
+.ELSE   ;///////////////////////////////////////////////////////////////////////
+        sty zp_y
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+.MACRO  .plx                    ; macro to polyfill 65C02's PuLl-X instruction
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+.IFDEF  CPU_65C02
+        ;///////////////////////////////////////////////////////////////////////
+        plx                     ; just as fast and only 1-byte
+.ELSE   ;///////////////////////////////////////////////////////////////////////
+        ldx zp_x
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+.MACRO  .ply                    ; macro to polyfill 65C02's PuLl-Y instruction
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+.IFDEF  CPU_65C02
+        ;///////////////////////////////////////////////////////////////////////
+        ply                     ; just as fast and only 1-byte
+.ELSE   ;///////////////////////////////////////////////////////////////////////
+        ldy zp_y
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+
+; macro to polyfill 65C02's STore-Zero instruction
+;-------------------------------------------------------------------------------
+.MACRO  .stz                                                            ;cycles
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+.IFDEF  CPU_65C02
+        ;///////////////////////////////////////////////////////////////////////
+        stz \1                  ; native to the 65C02                   ;+3|4
+.ELSE   ;///////////////////////////////////////////////////////////////////////
+        lda # 0                 ; load a zero first,                    ;+2
+        sta \1                  ; and store                             ;+3|4
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+; an optimisation, to avoid extra branching, is to jump into the middle of an
+; instruction which is then interpretted as some other instruction. a common
+; example of this is using the `bit` instruction as a 'do nothing' instruction
+; with the option to jump over the `bit` opcode and treat the 2-byte parameter
+; as a different instruction:
+;
+;     bit $00a9 ;<-- this is `lda # $00` if you skip the `bit` opcode
+;
+; this macro simply outputs the opcode for the `bit` instruction,
+; causing the next 2-byte instruction to be 'ignored'. for example:
+;
+;    do_one_thing:
+;         lda # $ff
+;        .bit_skip2     ; skip the next `lda` by making it a `bit` instruction
+;
+;     do_a_different_thing:
+;         lda # $00
+;
+;-------------------------------------------------------------------------------
+.MACRO  .bit_skip2
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        .BYTE   CPU_BIT
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM
+
+; this is a version that skips one byte
+;-------------------------------------------------------------------------------
+.MACRO  .bit_skip1
+;>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        .BYTE   CPU_BIT_ZP
+;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+.ENDM

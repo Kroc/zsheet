@@ -1,0 +1,17 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+; cbm_init.wla : system intialisation for CBM machines
+;===============================================================================
+; start the program's code with the BASIC bootstrap
+; to jump to the machine code that follows:
+;
+.INC    "sys/cbm/cbm_basic.wla"
+
+sys_init:
+;===============================================================================
+        ldx # $ff               ; throw away the current return stack,
+        txs                     ; we won't be returning to BASIC
+
+        jmp zsheet_init

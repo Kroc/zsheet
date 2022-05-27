@@ -1,0 +1,116 @@
+; function for working with "rc" (row-col) cell references:
+
+.STRUCT Rc
+        row     WORD
+        col     BYTE
+.ENDST
+
+col_index_to_alpha:
+;===============================================================================
+; convert a column number (0-255) to alpha ("A"..."IV")
+;
+; in:   A       column-number (0-255)
+;
+; out:  A       lower letter as a screen-code ($41-$5A)
+;       X       upper letter as a screen-code ($41-$5A), $40 for none
+;       Y       (preserved)
+;-------------------------------------------------------------------------------
+        ldx # $40               ; begin with columns "A"-"Z", no upper letter
+        sec                     ; clear borrow for subtracting
+
+.IFDEF  OPTIMIZE_SIZE
+-       sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; increment upper letter,
+        bne -                   ; and check again
+.ELSE
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("A" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("B" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("C" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("D" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("E" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("F" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("G" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("H" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("I" upper letter)
+        sbc # 26                ; reduce index by 26
+.ENDIF
+        ; because of the underflow, A is between -230 ($EA) and 255 ($FF).
+        ; we need to fix this number to between $41 ("A") and $5A ("Z"):
++       adc # 26+$41
+        rts
+
+col_index_to_alpha_x:
+;===============================================================================
+; convert a column number (0-255) to alpha ("A"..."IV")
+;
+; in:   X       column-number (0-255)
+;
+; out:  A       lower letter as a screen-code ($41-$5A)
+;       X       upper letter as a screen-code ($41-$5A), $40 for none
+;       Y       (preserved)
+;-------------------------------------------------------------------------------
+        txa
+
+col_index_to_alpha_a:
+;===============================================================================
+        ldx # $40               ; begin with columns "A"-"Z", no upper letter
+        sec                     ; clear borrow for subtracting
+
+.IFDEF  OPTIMIZE_SIZE
+-       sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; increment upper letter,
+        bne -                   ; and check again
+.ELSE
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("A" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("B" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("C" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("D" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("E" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("F" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("G" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("H" upper letter)
+        sbc # 26                ; reduce index by 26
+        bcc +                   ; if borrow occured, look up lower "A"-"Z"
+        inx                     ; ("I" upper letter)
+        sbc # 26                ; reduce index by 26
+.ENDIF
+        ; because of the underflow, A is between -230 ($EA) and 255 ($FF).
+        ; we need to fix this number to between $41 ("A") and $5A ("Z"):
++       adc # 26+$41
+        rts

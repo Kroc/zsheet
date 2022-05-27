@@ -1,0 +1,41 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+;===============================================================================
+; CPU identification:
+;
+.DEF    CPU_65XX        1       ; a 6502-based CPU;
+.DEF    CPU_6502        1       ; similar enough to a 6502 to warrant this
+.DEF    CPU_6510        1       ; specifically, the C64 uses a 6510 CPU
+
+; number of rows / columns in text-mode, 1-based.
+; (this is defined across different systems to provide
+;  standard screen width / height constants)
+;
+.DEF    SYS_SCREEN_COLS 40
+.DEF    SYS_SCREEN_ROWS 25
+
+.INC    "sys/cbm/c64/c64_mem.wla"       ; C64-specific memory addresses
+.INC    "sys/cbm/c64/c64_cia.wla"
+.INC    "sys/cbm/c64/c64_vic.wla"
+.INC    "sys/cbm/c64/c64_kernal.wla"
+
+;===============================================================================
+; ZShell memory map:
+;
+;  $0   $1000                                        $C000            $FFFF
+;  +--+-+--------------------------------------------+----------------+
+;  |  | | SHEET DATA                                 | CODE           |
+;  +--+-+--------------------------------------------+----------------+
+;     $0800 < font
+;
+.DEF    zs_screen       $0400   ; screen-RAM
+.DEF    zs_font         $0800   ; custom font
+.DEF    zs_code         $1000   ; user-space starting address
+
+; active device number (system-dependent);
+; this is the same ZP byte used by the KERNAL
+; to store the last-used device number
+;
+.DEF    zs_device       ZP_KERNAL_DEV                               ;=$BA
