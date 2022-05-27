@@ -59,35 +59,60 @@ draw_screen:
         sta zp_rc_draw.row+LO
         lda zp_window.row+HI
         sta zp_rc_draw.row+HI
-        ; do a complete redraw of the view
-        jmp draw_sheet
+        
+        jsr draw_status_bar
+        jmp draw_sheet          ; do a complete redraw of the view
+
+
+draw_status_bar:
+;===============================================================================
+; do a complete draw of the status bar:
+;-------------------------------------------------------------------------------
+        lda #< (zs_screen + (23 * SYS_SCREEN_COLS))
+        sta zp_print+LO
+        lda #> (zs_screen + (23 * SYS_SCREEN_COLS))
+        sta zp_print+HI
+        
+        ldy # 0
+        ldx # 40
+        lda # $a0
+        jmp fast_write_x
+
 
 draw_sheet:
 ;===============================================================================
 ; does a complete draw of the spreadsheet view
 ;
 ;-------------------------------------------------------------------------------
-        jmp draw_col_headers
+        jsr draw_col_headers
+        jmp draw_rows
+
 
 draw_col_headers:
 ;===============================================================================
 ; draws the column headers across the screen
 ;
 ;-------------------------------------------------------------------------------
-        lda #< (zs_screen + (2 * SYS_SCREEN_COLS))
+        lda #< (zs_screen + (1 * SYS_SCREEN_COLS))
         sta zp_print+LO
-        lda #> (zs_screen + (2 * SYS_SCREEN_COLS))
+        lda #> (zs_screen + (1 * SYS_SCREEN_COLS))
         sta zp_print+HI
 
         ; left-hand offset, this needs to be based upon
         ; the number of characters in the view's first row!
-        ldy # 4
+        ;
+        ; fill in the corner bit of the sheet
+        ldy # 0                 ; start screen col...
+        ldx # 3                 ; width...
+        lda # $a0               ; character...
+        jsr fast_write_x        ; print!
+
         ; first column to begin drawing
         ldx zp_rc_draw.col
 
         ; keep drawing columns until we reach the edge of the screen:
         ;
--       lda # 7                 ; column width
+-       lda # 3                 ; column width
         jsr draw_col_header     ; draw the column header
         cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
         beq +                   ; if so -- stop drawing column headers
@@ -168,6 +193,36 @@ draw_col_header:
         ldy zp_a                ; restore screen column
         rts
 
+
+draw_rows:
+;===============================================================================
+; draw a series of rows:
+;
+;-------------------------------------------------------------------------------
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        jsr draw_row
+        rts
+
+
 draw_row:
 ;===============================================================================
 ; draws a screen row, including the row number:
@@ -177,17 +232,58 @@ draw_row:
 ;-------------------------------------------------------------------------------
         ldy # 0                 ; start on the left edge of the screen
 
+        ; TODO: print the number
+        lda # $a0
+        ldx # 3
+        jsr fast_write_x
 
-        rts
+        ; keep drawing cells until we reach the edge of the screen:
+        ;
+-       lda # 3                 ; cell width
+        jsr draw_empty_cell     ; draw an empty cell
+        cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
+        bne -                   ; if not keep drawing cells
+
+        jmp bump_addr
 
 
-draw_col_cells
+draw_empty_cell:
 ;===============================================================================
-; draw a column's cells (sans header)
+; fast draw an empty cell (and its right border):
 ;
-; in:   X       column number (0-256)
+; drawing will stop if the column hits the edge of the screen
+;
+; in:   A       cell width. the right border is added automatically
+;       Y       starting screen position, where `zp_print` is screen row addr,
+;               e.g. `zp_addr` = $0400, Y is sceen col. 0-39
 ;-------------------------------------------------------------------------------
-        rts
+        sta zp_a                ; set aside column width
+        sty zp_y                ; set aside current screen position
+        
+        ; when printing, X will be the number of chars to print;
+        ; to begin with, set this to the column width
+        tax
+        
+        sec
+        lda # SYS_SCREEN_COLS
+        sbc zp_y
+        cmp zp_a
+        bcs +
+
+        tax                     ; use the clipped cell-width instead
+
+        ; draw cell background:
+        ; note that X already contains cell width to draw
++       lda # $20               ; (set character to print)
+        jsr fast_write_x        ; NOTE: does not modify carry!
+        bcc +
+        
+        ; print the right-border:
+        lda # $67
+        sta [zp_print], y
+        iny
+
++       rts
 
 
 ; TODO: switch this to `BITWINDOW` instead of `ALIGN 256`

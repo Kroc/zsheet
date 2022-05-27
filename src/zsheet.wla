@@ -48,12 +48,11 @@
         zp_cursor       INSTANCEOF Rc
 .ENDS
 
-; zsheet initialisation:
-;===============================================================================
+
 zsheet_init:
-        lda # VIC_CYAN
-        sta VIC_BORDER
+;===============================================================================
         lda # VIC_BLUE
+        sta VIC_BORDER
         sta VIC_BACKGROUND
 
         jsr print_this
