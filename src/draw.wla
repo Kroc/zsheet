@@ -82,29 +82,19 @@ draw_col_headers:
         ; left-hand offset, this needs to be based upon
         ; the number of characters in the view's first row!
         ldy # 4
-
+        ; first column to begin drawing
         ldx zp_rc_draw.col
 
-        lda # 3                 ; column width
-        jsr draw_col_header
-        inx
+        ; keep drawing columns until we reach the edge of the screen:
+        ;
+-       lda # 7                 ; column width
+        jsr draw_col_header     ; draw the column header
+        cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
+        beq +                   ; if so -- stop drawing column headers
+        inx                     ; move to next column number,
+        bne -                   ; and draw again
 
-        lda # 7
-        jsr draw_col_header
-        inx
-
-        lda # 4
-        jsr draw_col_header
-        inx
-
-        lda # 9
-        jsr draw_col_header
-        inx
-
-        lda # 6
-        jsr draw_col_header
-
-        jmp bump_addr
++       jmp bump_addr
 
 
 draw_col_header:
@@ -118,7 +108,10 @@ draw_col_header:
 ;       Y       starting screen position, where `zp_print` is screen row addr,
 ;               e.g. `zp_addr` = $0400, Y is sceen col. 0-39
 ;
-; out:  A       (clobbered)
+; out:  X       the column number is not incremented for the benefit
+;               of printing a column of the sheet vertically
+;       Y       the screen position is moved forward over the column
+;       A       (clobbered)
 ;===============================================================================
         sta zp_a                ; set aside column width
         stx zp_x                ; set aside column index
@@ -171,8 +164,8 @@ draw_col_header:
 +       ora # %10000000         ; set reverse video
         sta [zp_print], y       ; print lower-letter
 
-@end:   ldy zp_a                ; restore screen column
-        ldx zp_x                ; restore column index
+@end:   ldx zp_x                ; restore column index
+        ldy zp_a                ; restore screen column
         rts
 
 draw_row:
