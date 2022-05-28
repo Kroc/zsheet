@@ -25,7 +25,7 @@ print_str:
 ; in:   A       string address, lo-byte
 ;       Y       string address, hi-byte
 ;
-; out:  Y       number of bytes printed       
+; out:  Y       number of bytes printed
 ;       A       (clobbered)
 ;       X       (preserved)
 ;-------------------------------------------------------------------------------
@@ -172,19 +172,21 @@ print_number_byte:
         bcs -                   ; keep going?
         pha                     ; (put aside the remainder)
 
+        ; we compare with "1" instead of "0" so that carry is clear for "0"
+        ; and set for "1"-"9". we slide this into the flag byte to indicate
+        ; later whether the middle digit should be a space or a number
+        ;
         txa                     ; get hundreds-digit:
-        cmp # $30               ; is it a zero?
-        bne +                   ; if yes, don't print leading zeroes
-        lda # $20
-+       ora zp_print_mask
+        cmp # $31               ; is it a zero?
+        bcs +
+        lda # $20               ; no hundreds digit: use a space instead
++       ora zp_print_mask       ; apply reverse-video mode, if enabled
         sta [zp_print], y       ; print the digit
         iny                     ; move to the next screen col
 
-        clc                     ; (carry state unknown)
+        ror.w @flag             ; (store carry in bit 7 and clear carry!)
         pla                     ; retrieve the working remainder
 
-print_number_byte_99:
-        ;-----------------------------------------------------------------------
         ; tens & ones:
         ;-----------------------------------------------------------------------
         ldx # $39+1             ; decrement using an ASCII digit!
@@ -196,18 +198,21 @@ print_number_byte_99:
         pha                     ; (put aside the remainder!)
 
         txa                     ; get tens-digit:
+        rol.w @flag             ; retrieve flag to indicate padding or not
+        bcs +                   ; carry set means there was a hundreds digit
+                                ; so we should print a literal "0"
         cmp # $30               ; is the digit a zero?
-        bne +                   ; if yes, don't print leading zeroes
-
-        lda # $20
-+       ora zp_print_mask
+        bne +                   ; if not, no padding needed,
+        lda # $20               ; otherwise use padding instead
++       ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_print], y       ; print the digit
         iny                     ; move to the next screen col
 
         pla                     ; retrieve the 1s-digit
-        
-        ora zp_print_mask
+        ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_print], y       ; print the digit
         iny                     ; move to the next screen col
 
         rts
+
+@flag:  .BYTE %00000000

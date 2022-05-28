@@ -101,7 +101,65 @@ zsheet_init:
         sta zp_print_mask
 
         jsr draw_screen
--       jmp -
+
+-       jsr input
+        jmp -
+
+input:
+;===============================================================================
+        ; read keyboard:
+-       jsr KERNAL_GETIN_ADDR
+        beq -
+
+@down   cmp # PET_CRSR_DN
+        ;-----------------------------------------------------------------------
+        bne @up
+
+        lda zp_window.row+LO
+        cmp # $100-21 ; (height of view)
+        beq @rts
+        inc zp_window.row+LO
+        jmp draw_screen
+
+@up     cmp # PET_CRSR_UP
+        ;-----------------------------------------------------------------------
+        bne @right
+
+        ; if at row zero, cannot scroll up!
+        lda zp_window.row+LO
+        bne +
+        rts
+
++       dec zp_window.row+LO
+        jmp draw_screen
+
+@right  cmp # PET_CRSR_RT
+        ;-----------------------------------------------------------------------
+        bne @left
+        
+        ldx zp_window.col
+        inx
+        bne +
+        rts
+        
++       stx zp_window.col
+        jmp draw_screen
+
+@left   cmp # PET_CRSR_LT
+        ;-----------------------------------------------------------------------
+        bne @rts
+        
+        ; if at column zero, cannot scroll left!
+        lda zp_window.col
+        bne +
+        rts
+
++       dec zp_window.col
+        jmp draw_screen
+
+@rts    rts
+
+
 
 @filename:
         .ASC    "font", 0
