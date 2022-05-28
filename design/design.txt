@@ -1,5 +1,0 @@
-
-
-%--------
-%1------- Cell is formatted different from column default
-%--------
