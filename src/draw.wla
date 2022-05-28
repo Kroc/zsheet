@@ -10,6 +10,9 @@
         ; a vector specifically for putting characters to screen
         ; -- this is always the current drawing address on screen
         zp_print        WORD
+        ; a bitmask ORed with characters before being printed;
+        ; use %10000000 ($80) for reverse-video and %01000000 to force capitals
+        zp_print_mask   BYTE
 .ENDS
 
 
@@ -59,7 +62,7 @@ draw_screen:
         sta zp_rc_draw.row+LO
         lda zp_window.row+HI
         sta zp_rc_draw.row+HI
-        
+
         jsr draw_status_bar
         jmp draw_sheet          ; do a complete redraw of the view
 
@@ -73,10 +76,13 @@ draw_status_bar:
         lda #> (zs_screen + (23 * SYS_SCREEN_COLS))
         sta zp_print+HI
         
-        ldy # 0
-        ldx # 40
-        lda # $a0
-        jmp fast_write_x
+        ; set reverse-video drawing
+        lda # %10000000
+        sta zp_print_mask
+
+        ldy # 0                 ; starting screen column
+        ldx # 40                ; print 40 times
+        jmp fast_spaces
 
 
 draw_sheet:
@@ -104,8 +110,7 @@ draw_col_headers:
         ; fill in the corner bit of the sheet
         ldy # 0                 ; start screen col...
         ldx # 3                 ; width...
-        lda # $a0               ; character...
-        jsr fast_write_x        ; print!
+        jsr fast_spaces         ; print!
 
         ; first column to begin drawing
         ldx zp_rc_draw.col
@@ -141,12 +146,15 @@ draw_col_header:
         sta zp_a                ; set aside column width
         stx zp_x                ; set aside column index
         sty zp_y                ; set aside current screen position
-        
+
         ; when printing, X will be the number of chars to print;
         ; to begin with, set this to the column width
         tax
         
-        sec
+        lda # %10000000
+        sta zp_print_mask
+
+        clc
         lda # SYS_SCREEN_COLS
         sbc zp_y
         cmp zp_a
@@ -154,11 +162,11 @@ draw_col_header:
 
         ; use the clipped column-width instead
         tax
+        inx
 
         ; draw header background:
         ; note that X already contains column width to draw
-+       lda # $a0               ; (set character to print)
-        jsr fast_write_x        ; NOTE: does not modify carry!
++       jsr fast_spaces         ; NOTE: does not modify carry!
         bcc +
         
         ; print the right-border:
@@ -199,27 +207,12 @@ draw_rows:
 ; draw a series of rows:
 ;
 ;-------------------------------------------------------------------------------
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
-        jsr draw_row
+        ldx # 0
+-       jsr draw_row
+        inx
+        cpx # 21
+        bne -
+
         rts
 
 
@@ -230,12 +223,16 @@ draw_row:
 ; this routine is used to fill in a row after scrolling vertically.
 ; the row number and column offset is taken from `zp_rc_draw`
 ;-------------------------------------------------------------------------------
-        ldy # 0                 ; start on the left edge of the screen
+        stx zp_x                ; backup row number
 
-        ; TODO: print the number
-        lda # $a0
-        ldx # 3
-        jsr fast_write_x
+        ; enable reverse video for column number
+        lda # %10000000
+        sta zp_print_mask
+
+        ldy # 0                 ; start on the left edge of the screen
+        jsr draw_row_number
+
+        asl zp_print_mask       ; disable reverse-video drawing
 
         ; keep drawing cells until we reach the edge of the screen:
         ;
@@ -244,7 +241,14 @@ draw_row:
         cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
         bne -                   ; if not keep drawing cells
 
+        ldx zp_x                ; restore row number
         jmp bump_addr
+
+
+draw_row_number:
+;===============================================================================
+        txa
+        jmp print_number_byte
 
 
 draw_empty_cell:
@@ -256,6 +260,8 @@ draw_empty_cell:
 ; in:   A       cell width. the right border is added automatically
 ;       Y       starting screen position, where `zp_print` is screen row addr,
 ;               e.g. `zp_addr` = $0400, Y is sceen col. 0-39
+;
+; out:  A       (clobbered)
 ;-------------------------------------------------------------------------------
         sta zp_a                ; set aside column width
         sty zp_y                ; set aside current screen position
@@ -264,18 +270,17 @@ draw_empty_cell:
         ; to begin with, set this to the column width
         tax
         
-        sec
+        clc
         lda # SYS_SCREEN_COLS
         sbc zp_y
         cmp zp_a
         bcs +
 
         tax                     ; use the clipped cell-width instead
+        inx
 
         ; draw cell background:
-        ; note that X already contains cell width to draw
-+       lda # $20               ; (set character to print)
-        jsr fast_write_x        ; NOTE: does not modify carry!
++       jsr fast_spaces         ; NOTE: does not modify carry!
         bcc +
         
         ; print the right-border:
@@ -541,5 +546,135 @@ fast_write_y:                                                           ;+6=6
 
 @ldx    .plx                    ; restore X
         rts
+
+.ENDS
+
+; TODO: switch this to `BITWINDOW` instead of `ALIGN 256`
+.SECTION fast_spaces    ALIGN 256       RETURNORG
+
+; NOTE: this routine *must* be aligned to fit *within* a 256-byte page!
+;
+fast_spaces:                                                            ;+6=6
+;===============================================================================
+; print up to 40 spaces, quickly
+;
+; in:   X       number of spaces to print
+;       Y       current offset from `zp_print` to start at
+;
+; out:  Y       Y is returned incremented by X;
+;               i.e. ready to write next value
+;       X       (preserved)
+;       carry   (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        lda.w @addrs, x         ; look up lo-byte of address to jump to ;+4=10
+        sta.w @jmp+1            ; change jump address to match          ;+4=14
+        
+        lda # $20               ; =space                                ;+2=16
+        ora zp_print_mask       ; apply reverse-video, if set (bit 7)   ;+3=19
+@jmp    jmp @chars                                                      ;+3=22
+
+@addrs: ;-----------------------------------------------------------------------
+        .BYTE   <@rts
+        .BYTE   <@chr1,         <@chr2,         <@chr3,         <@chr4
+        .BYTE   <@chr5,         <@chr6,         <@chr7,         <@chr8
+        .BYTE   <@chr9,         <@chr10,        <@chr11,        <@chr12
+        .BYTE   <@chr13,        <@chr14,        <@chr15,        <@chr16
+        .BYTE   <@chr17,        <@chr18,        <@chr19,        <@chr20
+        .BYTE   <@chr21,        <@chr22,        <@chr23,        <@chr24
+        .BYTE   <@chr25,        <@chr26,        <@chr27,        <@chr28
+        .BYTE   <@chr29,        <@chr30,        <@chr31,        <@chr32
+        .BYTE   <@chr33,        <@chr34,        <@chr35,        <@chr36
+        .BYTE   <@chr37,        <@chr38,        <@chr39,        <@chr40
+
+        ; NOTE: the cycle times here are backwards, indicating the total no.
+        ; of cycles taken from the specific character (e.g. 40) to the end;
+        ; that is, if you call this routine to print 1 character, it will take
+        ; 30 cycles (before the RTS). another way to calculate it is that
+        ; calling this routine will take 28 cycles plus 8 for each character
+        ; printed
+@chars: ;-----------------------------------------------------------------------
+@chr40: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr39: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr38: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr37: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr36: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr35: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr34: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr33: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr32: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr31: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr30: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr29: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr28: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr27: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr26: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr25: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr24: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr23: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr22: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr21: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr20: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr19: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr18: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr17: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr16: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr15: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr14: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr13: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr12: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr11: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr10: sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr9:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr8:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr7:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr6:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr5:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr4:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr3:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr2:  sta [zp_print], y                                               ;+6=
+        iny                                                             ;+2=
+@chr1:  sta [zp_print], y                                               ;+6=28
+        iny                                                             ;+2=30*
+
+@rts    rts                                                             ;*+6
 
 .ENDS

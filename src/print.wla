@@ -87,3 +87,127 @@ print_this:
 
 +       .plx                    ; restore X
         rts
+
+.RAMSECTION "ZP_BUFF"   SLOT "ZP"       RETURNORG
+        ;-----------------------------------------------------------------------
+        zp_buff         DSB 8
+.ENDS
+
+.RAMSECTION "ZP_TEMP"   SLOT "ZP"       RETURNORG
+        ;-----------------------------------------------------------------------
+        ; a temporary value available for conversions
+        zp_temp        .WORD
+        zp_temp1        DB
+        zp_temp2        DB
+.ENDS
+
+
+print_number_word:
+;===============================================================================
+; print a 16-bit binary number as decimal:
+;
+; adapted from:
+; <http://forum.6502.org/viewtopic.php?p=55800#p55800>
+;
+; in:   A       lo-byte of number
+;       X       hi-byte of number
+;
+; TODO: we may want to adpat this to 'pop' one digit at a time
+;       so that we can clip against the screen edge
+;-------------------------------------------------------------------------------
+        sta zp_word+LO
+        stx zp_word+HI
+
+@print: lda # 0                 ; null delimiter for print
+        pha
+
+        ; divide value by 10:
+@div10: lda # 0
+        sta zp_temp2            ; clr BCD
+        ldx # 16                ; loop counter (process 16 bits)
+
+@loop:  asl zp_word+LO          ; value is gradually replaced
+        rol zp_word+HI          ; with the quotient
+        rol zp_temp2            ; BCD result is gradually replaced
+        lda zp_temp2            ; with the remainder
+        sec
+        sbc # 10                ; partial BCD >= 10 ?
+        bcc +
+        sta zp_temp2            ; yes: update the partial result
+        inc zp_word+LO          ; set low bit in partial quotient
+
++       dex
+        bne @loop               ; loop 16 times
+        
+        lda zp_temp2
+        ora # $30               ; convert BCD result to ASCII
+        pha                     ; stack digits in ascending order
+        
+        lda zp_word+LO
+        ora zp_word+HI
+        bne @div10              ; } until value is 0
+        
+        pla
+-       ora zp_print_mask       ; apply reverse-video, if enabled
+        sta [zp_print], y
+        iny
+        pla
+        bne -
+
+        rts
+
+
+print_number_byte:
+;===============================================================================
+; this routine for converting a byte to decimal digits is adapted from:
+; <https://codebase64.org/doku.php?id=base:tiny_.a_to_ascii_routine>
+;
+;-------------------------------------------------------------------------------
+        ; hundreds:
+        ;-----------------------------------------------------------------------
+        sec
+        ldx # $30-1             ; increment using a screen-code digit!
+-       inx                     ; increment hundreds-digit,
+        sbc # 100               ; for each 100 decimal subtracted
+        bcs -                   ; keep going?
+        pha                     ; (put aside the remainder)
+
+        txa                     ; get hundreds-digit:
+        cmp # $30               ; is it a zero?
+        bne +                   ; if yes, don't print leading zeroes
+        lda # $20
++       ora zp_print_mask
+        sta [zp_print], y       ; print the digit
+        iny                     ; move to the next screen col
+
+        clc                     ; (carry state unknown)
+        pla                     ; retrieve the working remainder
+
+print_number_byte_99:
+        ;-----------------------------------------------------------------------
+        ; tens & ones:
+        ;-----------------------------------------------------------------------
+        ldx # $39+1             ; decrement using an ASCII digit!
+-       dex                     ; decrement the tens-digit,
+        adc # 10                ; for each 10 decimal subtracted
+        bmi -                   ; keep going?
+
+        adc # $30-1             ; make it an ASCII numeral
+        pha                     ; (put aside the remainder!)
+
+        txa                     ; get tens-digit:
+        cmp # $30               ; is the digit a zero?
+        bne +                   ; if yes, don't print leading zeroes
+
+        lda # $20
++       ora zp_print_mask
+        sta [zp_print], y       ; print the digit
+        iny                     ; move to the next screen col
+
+        pla                     ; retrieve the 1s-digit
+        
+        ora zp_print_mask
+        sta [zp_print], y       ; print the digit
+        iny                     ; move to the next screen col
+
+        rts

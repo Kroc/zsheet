@@ -87,6 +87,7 @@ zsheet_init:
 .ENDIF  ;///////////////////////////////////////////////////////////////////////
 
         lda # 0
+
         sta zp_window.col
         sta zp_window.row+LO
         sta zp_window.row+HI
@@ -94,6 +95,10 @@ zsheet_init:
         sta zp_cursor.col
         sta zp_cursor.row+LO
         sta zp_cursor.row+HI
+
+        ; make sure the bitmask for printing is clear!
+        ; (this is used to do reverse-video printing)
+        sta zp_print_mask
 
         jsr draw_screen
 -       jmp -
