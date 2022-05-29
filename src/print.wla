@@ -29,13 +29,13 @@ print_str:
 ;       A       (clobbered)
 ;       X       (preserved)
 ;-------------------------------------------------------------------------------
-        sta zp_addr+LO          ; load the string address into our indexer
-        sty zp_addr+HI
+        sta zp_print+LO         ; load the string address into our indexer
+        sty zp_print+HI
 
 print_str_addr:
         ;-----------------------------------------------------------------------
         ldy # 0
--       lda [zp_addr], y        ; read a character
+-       lda [zp_print], y       ; read a character
         beq +                   ; null-terminator? exit
         jsr sys_asc2chr         ; convert to ASCII
         jsr sys_chrout          ; output to screen
@@ -67,10 +67,10 @@ print_this:
         clc
         lda $0100+1, x          ; read the lo-byte from the stack
         adc # 1                 ; add 1 to move into the inline string
-        sta zp_addr+LO          ; set the string address, lo-byte
+        sta zp_print+LO         ; set the string address, lo-byte
         lda $0100+2, x          ; read the hi-byte from the stack
         adc # 0                 ; ripple the +1
-        sta zp_addr+HI          ; set the string address, hi-byte
+        sta zp_print+HI         ; set the string address, hi-byte
 
         jsr print_str_addr      ; print the string
 
@@ -88,17 +88,14 @@ print_this:
 +       .plx                    ; restore X
         rts
 
-.RAMSECTION "ZP_BUFF"   SLOT "ZP"       RETURNORG
-        ;-----------------------------------------------------------------------
-        zp_buff         DSB 8
-.ENDS
-
 .RAMSECTION "ZP_TEMP"   SLOT "ZP"       RETURNORG
         ;-----------------------------------------------------------------------
         ; a temporary value available for conversions
         zp_temp        .WORD
         zp_temp1        DB
         zp_temp2        DB
+        ; output value
+        zp_word         WORD
 .ENDS
 
 

@@ -22,29 +22,18 @@
 .DEF    ZS_COL_WIDTH_MAX     32
 .DEF    ZS_ROWS_MAX          999
 
-;===============================================================================
-; RAM variables:
-;===============================================================================
-.RAMSECTION "ZP_ADDR"   SLOT "ZP"       RETURNORG
-        ;-----------------------------------------------------------------------
-        ; a temporary address available for indirect addressing
-        zp_addr         WORD
-        ; an index for walking bytes
-        zp_index        BYTE
-        ; output value
-        zp_word         WORD
-.ENDS
-
 .INC    "print.wla"             ; screen output
 
-.INC    "rc.wla"
-.INC    "draw.wla"
+.INC    "rc.wla"                ; Row-Column structure handling
+.INC    "draw.wla"              ; drawing to the screen
 
 .RAMSECTION "ZP_CURSOR" SLOT "ZP"       RETURNORG
         ;-----------------------------------------------------------------------
-        ; current scroll offset of the window
-        zp_window       INSTANCEOF Rc
+        ; current scroll offset of the spreadsheet view
+        zp_view         INSTANCEOF Rc
         ; current cursor position
+        ; TODO: to support selection ranges, and even disparate selections;
+        ; (e.g. "A3,C6,B9") this will have to be a lot more complex
         zp_cursor       INSTANCEOF Rc
 .ENDS
 
@@ -88,9 +77,9 @@ zsheet_init:
 
         lda # 0
 
-        sta zp_window.col
-        sta zp_window.row+LO
-        sta zp_window.row+HI
+        sta zp_view.col
+        sta zp_view.row+LO
+        sta zp_view.row+HI
 
         sta zp_cursor.col
         sta zp_cursor.row+LO
@@ -115,10 +104,10 @@ input:
         ;-----------------------------------------------------------------------
         bne @up
 
-        lda zp_window.row+LO
+        lda zp_view.row+LO
         cmp # $100-21 ; (height of view)
         beq @rts
-        inc zp_window.row+LO
+        inc zp_view.row+LO
         jmp draw_screen
 
 @up     cmp # PET_CRSR_UP
@@ -126,23 +115,23 @@ input:
         bne @right
 
         ; if at row zero, cannot scroll up!
-        lda zp_window.row+LO
+        lda zp_view.row+LO
         bne +
         rts
 
-+       dec zp_window.row+LO
++       dec zp_view.row+LO
         jmp draw_screen
 
 @right  cmp # PET_CRSR_RT
         ;-----------------------------------------------------------------------
         bne @left
         
-        ldx zp_window.col
+        ldx zp_view.col
         inx
         bne +
         rts
         
-+       stx zp_window.col
++       stx zp_view.col
         jmp draw_screen
 
 @left   cmp # PET_CRSR_LT
@@ -150,11 +139,11 @@ input:
         bne @rts
         
         ; if at column zero, cannot scroll left!
-        lda zp_window.col
+        lda zp_view.col
         bne +
         rts
 
-+       dec zp_window.col
++       dec zp_view.col
         jmp draw_screen
 
 @rts    rts
