@@ -49,33 +49,35 @@ zsheet_init:
             .BYTE   NUL
 
 .IFDEF  SYSTEM_C64
-.ENDASM
         ;///////////////////////////////////////////////////////////////////////
         ; prepare KERNAL for loading
         ;
         ldx ZP_KERNAL_DEV       ; last-used KERNAL device number
         bne +                   ; not 0? good
         ldx # DEV_DRV8          ; default to drive 8
-+       ldy # $01               ; use PRG-provided load-address
++       ldy # $00               ; use fixed load address
         tya                     ; logical file number
         jsr KERNAL_SETLFS
 
         ldx #< @filename
         ldy #> @filename
-        lda # 6                 ; A is string-length
+        lda # 4                 ; A is string-length
         jsr KERNAL_SETNAM       ; set KERNAL file name
 
         lda # $00               ; load, not verify
+        ldx #< $c000
+        ldy #> $c000
         jsr KERNAL_LOAD
 
         bcc +
 
+        ; disk error!
 -       inc VIC_BORDER
         jmp -
-.ASM
+
 .ENDIF  ;///////////////////////////////////////////////////////////////////////
 
-        lda # 0
++       lda # 0
 
         sta zp_view.col
         sta zp_view.row+LO
@@ -93,6 +95,10 @@ zsheet_init:
 
 -       jsr input
         jmp -
+
+@filename:
+        ;-----------------------------------------------------------------------
+        .ASC    "font", 0
 
 input:
 ;===============================================================================
@@ -147,8 +153,3 @@ input:
         jmp draw_screen
 
 @rts    rts
-
-
-
-@filename:
-        .ASC    "font", 0
