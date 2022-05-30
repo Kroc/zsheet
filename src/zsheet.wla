@@ -17,15 +17,44 @@
         .INC    "sys/cpu_65xx.wla"
 .ENDIF
 
+; ZShell memory map:
+;===============================================================================
+;
+;  $0   $1000                                        $C000            $FFFF
+;  +--+-+--------------------------------------------+----------------+
+;  |  | | SHEET DATA                                 | CODE           |
+;  +--+-+--------------------------------------------+----------------+
+;     $0800 < font
+;
+.DEF    zs_screen       $0400   ; screen-RAM
+.DEF    zs_font         $0800   ; custom font
+.DEF    zs_data         $1000   ; user-space starting address
+.DEF    zs_code         $c000   ; main code
+
+; active device number (system-dependent);
+; this is the same ZP byte used by the KERNAL
+; to store the last-used device number
+;
+.DEF    zs_device       ZP_KERNAL_DEV                               ;=$BA
+
+;===============================================================================
 .DEF    ZS_COLS_MAX          256
 .DEF    ZS_COL_WIDTH_MIN     2
 .DEF    ZS_COL_WIDTH_MAX     32
 .DEF    ZS_ROWS_MAX          999
 
+; begin code:
+;===============================================================================
+.SLOT "HIRAM"
+
+init:
+        jmp zsheet_init
+
 .INC    "print.wla"             ; screen output
 
 .INC    "rc.wla"                ; Row-Column structure handling
 .INC    "draw.wla"              ; drawing to the screen
+
 
 .RAMSECTION "ZP_CURSOR" SLOT "ZP"       RETURNORG
         ;-----------------------------------------------------------------------
@@ -37,48 +66,24 @@
         zp_cursor       INSTANCEOF Rc
 .ENDS
 
-
 zsheet_init:
 ;===============================================================================
+        ldx # $ff               ; throw away the current return stack,
+        txs                     ; we won't be returning to BASIC
+
         lda # VIC_BLUE
         sta VIC_BORDER
         sta VIC_BACKGROUND
+
+        ; change the VIC memory layout to position the text-screen & font
+        lda # ((>zs_screen & %00111100) << 2) | ((>zs_font & %00111000) >> 2)
+        sta VIC_LAYOUT
 
         jsr print_this
             .BYTE   PET_CYAN, PET_CASE_LO, PET_CLEAR
             .BYTE   NUL
 
-.IFDEF  SYSTEM_C64
-        ;///////////////////////////////////////////////////////////////////////
-        ; prepare KERNAL for loading
-        ;
-        ldx ZP_KERNAL_DEV       ; last-used KERNAL device number
-        bne +                   ; not 0? good
-        ldx # DEV_DRV8          ; default to drive 8
-+       ldy # $00               ; use fixed load address
-        tya                     ; logical file number
-        jsr KERNAL_SETLFS
-
-        ldx #< @filename
-        ldy #> @filename
-        lda # 4                 ; A is string-length
-        jsr KERNAL_SETNAM       ; set KERNAL file name
-
-        lda # $00               ; load, not verify
-        ldx #< $c000
-        ldy #> $c000
-        jsr KERNAL_LOAD
-
-        bcc +
-
-        ; disk error!
--       inc VIC_BORDER
-        jmp -
-
-.ENDIF  ;///////////////////////////////////////////////////////////////////////
-
-+       lda # 0
-
+        lda # 0
         sta zp_view.col
         sta zp_view.row+LO
         sta zp_view.row+HI
@@ -93,12 +98,12 @@ zsheet_init:
 
         jsr draw_screen
 
+
+main:
+;===============================================================================
 -       jsr input
         jmp -
 
-@filename:
-        ;-----------------------------------------------------------------------
-        .ASC    "font", 0
 
 input:
 ;===============================================================================

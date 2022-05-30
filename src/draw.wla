@@ -191,7 +191,7 @@ draw_col_header:
         bcc +
         
         ; print the right-border:
-        lda # $e7
+        lda # $90
         sta [zp_print], y
         iny
 
@@ -341,7 +341,7 @@ draw_empty_cell:
         bcc +
         
         ; print the right-border:
-        lda # $67
+        lda # $11
         sta [zp_print], y
         iny
 
@@ -371,7 +371,7 @@ fast_spaces:                                                            ;+6=6
         lda.w @addrs, x         ; look up lo-byte of address to jump to ;+4=10
         sta.w @jmp+1            ; change jump address to match          ;+4=14
         
-        lda # $20               ; =space                                ;+2=16
+        lda # ' '               ; =space                                ;+2=16
         ora zp_print_mask       ; apply reverse-video, if set (bit 7)   ;+3=19
 @jmp    jmp @chars                                                      ;+3=22
 

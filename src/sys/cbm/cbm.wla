@@ -14,5 +14,5 @@
     .FAIL
 .ENDIF
 
-.INC    "sys/cbm/cbm_init.wla"      ; system-specific bootstrap/initialisation
+;;.INC    "sys/cbm/cbm_init.wla"      ; system-specific bootstrap/initialisation
 .INC    "sys/cbm/cbm_sys.wla"       ; C64 system interface

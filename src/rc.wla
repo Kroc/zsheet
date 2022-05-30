@@ -67,5 +67,5 @@ col_index_to_alpha:
 .ENDIF
         ; because of the underflow, A is between -230 ($EA) and 255 ($FF).
         ; we need to fix this number to between $41 ("A") and $5A ("Z"):
-+       adc # 26+$41
++       adc # 26+'A'
         rts

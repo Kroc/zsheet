@@ -5,10 +5,10 @@
 ; cbm_petscii.wla : the PETSCII character encoding (based on ASCII'63)
 ;===============================================================================
 
-.ASCIITABLE
-        MAP "a" TO "z"  = 65
-        MAP "A" TO "Z"  = 97
-.ENDA
+;;.ASCIITABLE
+;;        MAP "a" TO "z"  = 65
+;;        MAP "A" TO "Z"  = 97
+;;.ENDA
 
 ; PETSCII constants:
 ;===============================================================================

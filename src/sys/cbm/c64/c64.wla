@@ -20,22 +20,3 @@
 .INC    "sys/cbm/c64/c64_cia.wla"
 .INC    "sys/cbm/c64/c64_vic.wla"
 .INC    "sys/cbm/c64/c64_kernal.wla"
-
-;===============================================================================
-; ZShell memory map:
-;
-;  $0   $1000                                        $C000            $FFFF
-;  +--+-+--------------------------------------------+----------------+
-;  |  | | SHEET DATA                                 | CODE           |
-;  +--+-+--------------------------------------------+----------------+
-;     $0800 < font
-;
-.DEF    zs_screen       $0400   ; screen-RAM
-.DEF    zs_font         $0800   ; custom font
-.DEF    zs_code         $1000   ; user-space starting address
-
-; active device number (system-dependent);
-; this is the same ZP byte used by the KERNAL
-; to store the last-used device number
-;
-.DEF    zs_device       ZP_KERNAL_DEV                               ;=$BA

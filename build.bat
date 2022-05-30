@@ -31,17 +31,17 @@ IF ERRORLEVEL 1 EXIT /B 1
 
 REM # compress the program
 ECHO Exomizer...
-%EXOMIZER% sfx sys -t64 -n -q ^
+%EXOMIZER% sfx $c000 -t64 -n -q ^
      -o "build\zsheet_c64-exo.prg" ^
-     -- "build\zsheet_c64.prg
+     -- "build\zsheet_c64.prg" ^
+        "font\zsheet_c64.bin@0x0800"
 
 IF ERRORLEVEL 1 EXIT /B 1
 
 REM # build a 1541 floppy disk image
 %C1541% ^
     -format "zsheet,00" d64 "build/zsheet-c64.d64" ^
-    -write  "build/zsheet_c64-exo.prg"  "zsheet" ^
-    -write  "font/zsheet_c64.bin"       "font"
+    -write  "build/zsheet_c64-exo.prg"  "zsheet"
 
 IF ERRORLEVEL 1 EXIT /B 1
 

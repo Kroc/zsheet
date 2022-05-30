@@ -7,7 +7,7 @@
 ; start the program's code with the BASIC bootstrap
 ; to jump to the machine code that follows:
 ;
-.INC    "sys/cbm/cbm_basic.wla"
+;;.INC    "sys/cbm/cbm_basic.wla"
 
 sys_init:
 ;===============================================================================

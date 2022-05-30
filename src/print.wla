@@ -5,6 +5,87 @@
 ; print.wla : screen output
 ;
 
+sys_pet2asc:
+;===============================================================================
+; convert a PETSCII character code to ASCII:
+;
+; TODO: use a lookup-table for ROM-version?
+;       (would require preserving Y)
+;
+; in:   A       character code
+;
+; out:  A       character code, converted  
+;       X, Y    (preserved)
+;
+;-------------------------------------------------------------------------------
+        ; is the character in the PETSCII upper-case range?
+        ; note that the "case bit" in PETSCII is %10000000,
+        ; not %00100000 as in ASCII
+        ;
+        cmp # PET_A_UP          ; "A" and above?
+        bcc +                   ; no -- skip ahead
+        cmp # PET_Z_UP+1        ; "Z" and below?
+        bcs +                   ; no -- skip ahead
+
+        ; adjust PETSCII upper-case $C1..$DA down to ASCII upper-case $41..$5A
+        ; NOTE: carry is clear, so this subtracts an additional 1 for us!
+        sbc # $80-1
+        rts
+        
+        ; is the character in the PETSCII lower-case range?
+        ;
++       cmp # PET_A_LO          ; "a" and above?
+        bcc +                   ; no -- exit
+        cmp # PET_Z_LO+1        ; "z" and below?
+        bcs +                   ; no -- exit
+
+        ; adjust PETSCII lower-case $41..$5A
+        ; up to ASCII lower-case $61..$7A
+        adc # $20
+
++       rts
+
+
+sys_asc2pet:
+;===============================================================================
+; convert an ASCII character code to the system's native encoding:
+; for Commodore machines, this is PETSCII
+;
+; TODO: use a lookup-table for ROM-version?
+;       (would require preserving Y)
+;
+; in:   A       character code
+;
+; out:  A       character code, converted  
+;       X, Y    (preserved)
+;
+;-------------------------------------------------------------------------------
+        ; is the character in the ASCII lower-case range?
+        ;
+        cmp # $61               ; "a" and above?
+        bcc +                   ; no -- skip ahead
+        cmp # $7a+1             ; "z" and below?
+        bcs +                   ; no -- skip ahead
+
+        ; adjust ASCII lower-case $61..$7A down to PETSCII lower-case $41..$5A
+        ; NOTE: carry is clear, so this subtracts an additional 1 for us!
+        sbc # $20-1
+        rts
+        
+        ; is the character in the ASCII upper-case range?
+        ;
++       cmp # $41               ; "A" and above?
+        bcc +                   ; no -- exit
+        cmp # $5a+1             ; "z" and below?
+        bcs +                   ; no -- exit
+
+        ; adjust ASCII upper-case $41..$5A
+        ; up to PETSCII upper-case $C1..$DA
+        adc # $80
+
++       rts
+
+
 print_asc:
 ;===============================================================================
 ; print an ASCII character:
@@ -14,7 +95,7 @@ print_asc:
 ; out:  A       (clobbered)
 ;       X, Y    (preserved)
 ;-------------------------------------------------------------------------------
-        jsr sys_asc2chr         ; convert ASCII code to native encoding
+        jsr sys_asc2pet         ; convert ASCII code to native encoding
         jmp sys_chrout          ; print using the system-specific routine
 
 
@@ -37,7 +118,7 @@ print_str_addr:
         ldy # 0
 -       lda [zp_print], y       ; read a character
         beq +                   ; null-terminator? exit
-        jsr sys_asc2chr         ; convert to ASCII
+        jsr sys_asc2pet         ; convert to system encoding
         jsr sys_chrout          ; output to screen
         iny                     ; move to the next character
         bne -                   ; loop (but also end at 255 characters)
@@ -137,7 +218,7 @@ print_number_word:
         bne @loop               ; loop 16 times
         
         lda zp_temp2
-        ora # $30               ; convert BCD result to ASCII
+        ora # '0'               ; convert BCD result to ASCII
         pha                     ; stack digits in ascending order
         
         lda zp_word+LO
@@ -163,7 +244,7 @@ print_number_byte:
         ; hundreds:
         ;-----------------------------------------------------------------------
         sec
-        ldx # $30-1             ; increment using a screen-code digit!
+        ldx # '0'-1             ; increment using a screen-code digit!
 -       inx                     ; increment hundreds-digit,
         sbc # 100               ; for each 100 decimal subtracted
         bcs -                   ; keep going?
@@ -174,9 +255,9 @@ print_number_byte:
         ; later whether the middle digit should be a space or a number
         ;
         txa                     ; get hundreds-digit:
-        cmp # $31               ; is it a zero?
+        cmp # '1'               ; is it a zero?
         bcs +
-        lda # $20               ; no hundreds digit: use a space instead
+        lda # ' '               ; no hundreds digit: use a space instead
 +       ora zp_print_mask       ; apply reverse-video mode, if enabled
         sta [zp_print], y       ; print the digit
         iny                     ; move to the next screen col
@@ -186,21 +267,21 @@ print_number_byte:
 
         ; tens & ones:
         ;-----------------------------------------------------------------------
-        ldx # $39+1             ; decrement using an ASCII digit!
+        ldx # '9'+1             ; decrement using an ASCII digit!
 -       dex                     ; decrement the tens-digit,
         adc # 10                ; for each 10 decimal subtracted
         bmi -                   ; keep going?
 
-        adc # $30-1             ; make it an ASCII numeral
+        adc # '0'-1             ; make it an ASCII numeral
         pha                     ; (put aside the remainder!)
 
         txa                     ; get tens-digit:
         rol.w @flag             ; retrieve flag to indicate padding or not
         bcs +                   ; carry set means there was a hundreds digit
                                 ; so we should print a literal "0"
-        cmp # $30               ; is the digit a zero?
+        cmp # '0'               ; is the digit a zero?
         bne +                   ; if not, no padding needed,
-        lda # $20               ; otherwise use padding instead
+        lda # ' '               ; otherwise use padding instead
 +       ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_print], y       ; print the digit
         iny                     ; move to the next screen col
