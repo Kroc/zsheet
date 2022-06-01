@@ -5,37 +5,48 @@
 
 ; RAM variables:
 ;===============================================================================
-.RAMSECTION "ZP_PRINT" SLOT "ZP" RETURNORG
+.RAMSECTION "ZP_SCREEN" SLOT "ZP" RETURNORG
         ;-----------------------------------------------------------------------
         ; a vector specifically for putting characters to screen
         ; -- this is always the current drawing address on screen
-        zp_print        WORD
+        zp_screen       WORD
         ; a bitmask ORed with characters before being printed;
         ; use %10000000 ($80) for reverse-video and %01000000 to force capitals
-        zp_print_mask   BYTE
+        zp_screen_mask  BYTE
+        ; as with `zp_screen` this is the position in colour RAM.
+        ; the two are kept in sync when using `bump_addr`
+        zp_colour       WORD
+        ; current printing colour
+        zp_print_colour BYTE
 .ENDS
+
+;
 
 
 bump_addr:
 ;===============================================================================
-; add Y to `zp_print`
+; add Y to `zp_screen` & `zp_colour`
 ;
 ; when indexing using Y, this routine is used to bump the 16-bit address
 ; up according to the value in Y to avoid an 8-bit rollover in Y
 ;
-; in:   Y       a value to add to `zp_print`
+; in:   Y       a value to add to `zp_screen` & `zp_colour`
 ; out:  Y       set to zero
 ;       A, X    (preserved)
 ;-------------------------------------------------------------------------------
         pha                     ; preserve A
-        tya
-        clc
-        adc zp_print+LO
-        bcc +
-        inc zp_print+HI
-+       sta zp_print+LO
         
-        ; Y is set back to zero so that `lda [zp_print], y`
+        tya                     ; take current offset
+        clc                     ; prepare for math!
+        adc zp_screen+LO        ; add Y to the address lo-byte
+        bcc +                   ; if it doesn't overflow, skip the hi-byte
+        inc zp_screen+HI        ; increment the print address hi-byte,
+        inc zp_colour+HI        ; and the colour address likewise
+        clc                     ; (carry must be cleared for the next bit)
++       sta zp_screen+LO        ; update the address lo-byte --
+        sta zp_colour+LO        ; these are the same between print & colour
+        
+        ; Y is set back to zero so that `lda [zp_screen], y`
         ; reflects the same address as before!
         ldy # 0
         
@@ -72,17 +83,22 @@ draw_status_bar:
 ; do a complete draw of the status bar:
 ;-------------------------------------------------------------------------------
         lda #< (zs_screen + (23 * SYS_SCREEN_COLS))
-        sta zp_print+LO
+        sta zp_screen+LO
+        sta zp_colour+LO
         lda #> (zs_screen + (23 * SYS_SCREEN_COLS))
-        sta zp_print+HI
+        sta zp_screen+HI
+        clc
+        adc # COLOUR_OFFSET
+        sta zp_colour+HI
         
         ; set reverse-video drawing
         lda # %10000000
-        sta zp_print_mask
+        sta zp_screen_mask
 
         ldy # 0                 ; starting screen column
-        ldx # 40                ; print 40 times
-        jmp fast_spaces
+        ldx # 40                ; print 40 spaces
+        lda # VIC_CYAN          ; with this colour
+        jmp fast_spaces_colour
 
 
 draw_sheet:
@@ -100,9 +116,13 @@ draw_col_headers:
 ;
 ;-------------------------------------------------------------------------------
         lda #< (zs_screen + (1 * SYS_SCREEN_COLS))
-        sta zp_print+LO
+        sta zp_screen+LO
+        sta zp_colour+LO
         lda #> (zs_screen + (1 * SYS_SCREEN_COLS))
-        sta zp_print+HI
+        sta zp_screen+HI
+        clc
+        adc # COLOUR_OFFSET
+        sta zp_colour+HI
 
         ; left-hand offset, this needs to be based upon
         ; the number of characters in the view's first row!
@@ -110,7 +130,8 @@ draw_col_headers:
         ; fill in the corner bit of the sheet
         ldy # 0                 ; start screen col...
         ldx # 3                 ; width...
-        jsr fast_spaces         ; print!
+        lda # VIC_CYAN          ; colour...
+        jsr fast_spaces_colour  ; print!
 
         ; first column to begin drawing
         ldx zp_drawrc.col
@@ -126,7 +147,7 @@ draw_col_headers:
         bne -                   ; and draw again
 
         ; when the column headers hit the edge of the screen, Y will already
-        ; be equal to the screen width and `bump_addr` will update `zp_print`
+        ; be equal to the screen width and `bump_addr` will update `zp_screen`
         ; and wrap Y back to zero. if we hit the last column ("IV") before
         ; hitting the edge of the screen, we need to clear the right-hand
         ; side of the screen to avoid grabage from the previous scroll
@@ -141,7 +162,7 @@ draw_col_headers:
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
         tax
-        asl zp_print_mask       ; turn off reverse-video
+        asl zp_screen_mask      ; turn off reverse-video
         jsr fast_spaces         ; print spaces to the end of the screen
 
         ; add Y to the screen address to reset Y to zero on the next screen row
@@ -156,8 +177,8 @@ draw_col_header:
 ;
 ; in:   A       column width. the right border is added automatically
 ;       X       column number (0-255), which will be converted to alpha
-;       Y       starting screen position, where `zp_print` is screen row
-;               addr, e.g. `zp_print` = $0400, Y is sceen col. 0-39
+;       Y       starting screen position, where `zp_screen` is screen row
+;               addr, e.g. `zp_screen` = $0400, Y is sceen col. 0-39
 ;
 ; out:  X       the column number is not incremented for the benefit
 ;               of printing a column of the sheet vertically
@@ -173,7 +194,7 @@ draw_col_header:
         tax
         
         lda # %10000000
-        sta zp_print_mask
+        sta zp_screen_mask
 
         clc
         lda # SYS_SCREEN_COLS
@@ -187,12 +208,15 @@ draw_col_header:
 
         ; draw header background:
         ; note that X already contains column width to draw
-+       jsr fast_spaces         ; NOTE: does not modify carry!
++       lda # VIC_CYAN
+        jsr fast_spaces         ; NOTE: does not modify carry!
         bcc +
         
         ; print the right-border:
         lda # $90
-        sta [zp_print], y
+        sta [zp_screen], y
+        lda # VIC_CYAN
+        sta [zp_colour], y
         iny
 
         ; print the column title ("A"-"IV")
@@ -208,7 +232,7 @@ draw_col_header:
         pha                     ; put aside lower-letter
         txa                     ; get upper-letter
         ora # %10000000         ; set reverse video
-        sta [zp_print], y       ; print upper-letter
+        sta [zp_screen], y      ; print upper-letter
         iny                     ; move to next character on screen
         pla                     ; retrieve lower-letter
 
@@ -216,7 +240,7 @@ draw_col_header:
         beq @end
 
 +       ora # %10000000         ; set reverse video
-        sta [zp_print], y       ; print lower-letter
+        sta [zp_screen], y      ; print lower-letter
 
 @end:   ldx zp_x                ; restore column index
         ldy zp_a                ; restore screen column
@@ -249,7 +273,7 @@ draw_row:
 ; this routine is used to fill in a row after scrolling vertically
 ;
 ; in:   X       row number; TODO: this to be expanded to 16-bit
-; out:  Y       Y, screen-column, is reset to 0 and `zp_print`
+; out:  Y       Y, screen-column, is reset to 0 and `zp_screen`
 ;               is moved forward to the next screen row
 ;       X       (preserved)
 ;       A       (clobbered)
@@ -258,11 +282,11 @@ draw_row:
 
         ; enable reverse video for column number
         lda # %10000000
-        sta zp_print_mask
+        sta zp_screen_mask
 
         ldy # 0                 ; start on the left edge of the screen
         jsr draw_row_number
-        asl zp_print_mask       ; disable reverse-video drawing
+        asl zp_screen_mask      ; disable reverse-video drawing
 
         lda zp_view.col
         sta zp_drawrc.col
@@ -277,7 +301,7 @@ draw_row:
         bne -                   ; and draw again
 
         ; when the cells hit the edge of the screen, Y will already be equal
-        ; to the screen width and `bump_addr` will update `zp_print` and wrap
+        ; to the screen width and `bump_addr` will update `zp_screen` and wrap
         ; Y back to zero. if we hit the last column ("IV") before hitting the
         ;  edge of the screen, we need to clear the right-hand side of the
         ; screen to avoid grabage from the previous scroll
@@ -292,7 +316,7 @@ draw_row:
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
         tax
-        asl zp_print_mask       ; turn off reverse-video
+        asl zp_screen_mask      ; turn off reverse-video
         jsr fast_spaces         ; print spaces to the end of the screen
 
 +       ldx zp_x                ; restore row number
@@ -315,8 +339,8 @@ draw_empty_cell:
 ; drawing will stop if the column hits the edge of the screen
 ;
 ; in:   A       cell width. the right border is added automatically
-;       Y       starting screen position, where `zp_print` is screen row
-;               addr, e.g. `zp_print` = $0400, Y is sceen col. 0-39
+;       Y       starting screen position, where `zp_screen` is screen row
+;               addr, e.g. `zp_screen` = $0400, Y is sceen col. 0-39
 ;
 ; out:  A       (clobbered)
 ;-------------------------------------------------------------------------------
@@ -337,30 +361,27 @@ draw_empty_cell:
         inx
 
         ; draw cell background:
-+       jsr fast_spaces         ; NOTE: does not modify carry!
++       lda # VIC_CYAN
+        jsr fast_spaces_colour  ; NOTE: does not modify carry!
         bcc +
         
         ; print the right-border:
         lda # $11
-        sta [zp_print], y
+        sta [zp_screen], y
+        lda # VIC_CYAN
+        sta [zp_colour], y
         iny
 
 +       rts
 
 
-; TODO: switch this to `BITWINDOW` instead of `ALIGN 256`
-; when I'm able to update WLA-DX (some bug with load-address?)
-;
-.SECTION fast_spaces    ALIGN 256       RETURNORG
-
-; NOTE: this routine *must* be aligned to fit *within* a 256-byte page!
-;
-fast_spaces:                                                            ;+6=6
+fast_spaces_colour:
 ;===============================================================================
-; print up to 40 spaces, quickly
+; print up to 40 spaces, quickly, with colour set
 ;
-; in:   X       number of spaces to print
-;       Y       current offset from `zp_print` to start at
+; in:   A       colour code
+;       X       number of spaces to print
+;       Y       current offset from `zp_screen`/`zp_colour` to start at
 ;
 ; out:  Y       Y is returned incremented by X;
 ;               i.e. ready to write next value
@@ -368,114 +389,286 @@ fast_spaces:                                                            ;+6=6
 ;       carry   (preserved)
 ;       A       (clobbered)
 ;-------------------------------------------------------------------------------
-        lda.w @addrs, x         ; look up lo-byte of address to jump to ;+4=10
+        sty.w @ldy+1            ; preserve Y
+
+        ; do the colouring first since A specifies the colour code
+        jsr fast_colour
+
+        ; restore Y to go back to the start position and draw the spaces
+@ldy    ldy # $00
+
+fast_spaces:                                                            ;+6=6
+;===============================================================================
+; print up to 40 spaces, quickly
+;
+; in:   X       number of spaces to print
+;       Y       current offset from `zp_screen` to start at
+;
+; out:  Y       Y is returned incremented by X;
+;               i.e. ready to write next value
+;       X       (preserved)
+;       carry   (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        lda.w spaces_table, x   ; look up lo-byte of address to jump to ;+4=10
         sta.w @jmp+1            ; change jump address to match          ;+4=14
         
-        lda # ' '               ; =space                                ;+2=16
-        ora zp_print_mask       ; apply reverse-video, if set (bit 7)   ;+3=19
-@jmp    jmp @chars                                                      ;+3=22
+        lda # ' '               ; use a space character                 ;+2=16
+        ora zp_screen_mask      ; apply reverse-video, if set (bit 7)   ;+3=19
+@jmp    jmp spaces_chars                                                ;+3=22
 
-@addrs: ;-----------------------------------------------------------------------
-        .BYTE   <@rts
-        .BYTE   <@chr1,         <@chr2,         <@chr3,         <@chr4
-        .BYTE   <@chr5,         <@chr6,         <@chr7,         <@chr8
-        .BYTE   <@chr9,         <@chr10,        <@chr11,        <@chr12
-        .BYTE   <@chr13,        <@chr14,        <@chr15,        <@chr16
-        .BYTE   <@chr17,        <@chr18,        <@chr19,        <@chr20
-        .BYTE   <@chr21,        <@chr22,        <@chr23,        <@chr24
-        .BYTE   <@chr25,        <@chr26,        <@chr27,        <@chr28
-        .BYTE   <@chr29,        <@chr30,        <@chr31,        <@chr32
-        .BYTE   <@chr33,        <@chr34,        <@chr35,        <@chr36
-        .BYTE   <@chr37,        <@chr38,        <@chr39,        <@chr40
 
-        ; NOTE: the cycle times here are backwards, indicating the total no.
-        ; of cycles taken from the specific character (e.g. 40) to the end;
-        ; that is, if you call this routine to print 1 character, it will take
-        ; 30 cycles (before the RTS). another way to calculate it is that
-        ; calling this routine will take 28 cycles plus 8 for each character
-        ; printed
-@chars: ;-----------------------------------------------------------------------
-@chr40: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr39: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr38: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr37: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr36: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr35: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr34: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr33: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr32: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr31: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr30: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr29: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr28: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr27: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr26: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr25: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr24: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr23: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr22: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr21: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr20: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr19: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr18: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr17: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr16: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr15: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr14: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr13: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr12: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr11: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr10: sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr9:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr8:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr7:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr6:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr5:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr4:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr3:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr2:  sta [zp_print], y                                               ;+6=
-        iny                                                             ;+2=
-@chr1:  sta [zp_print], y                                               ;+6=28
-        iny                                                             ;+2=30*
+fast_colour:                                                            ;+6=6
+;===============================================================================
+; colour up to 40 screen cells, quickly
+;
+; in:   A       colour code
+;       X       number of cells to colour
+;       Y       current offset from `zp_screen` to start at
+;
+; out:  Y       Y is returned incremented by X;
+;               i.e. ready to write next value
+;       X       (preserved)
+;       carry   (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        pha                     ; put colour value aside                ;+3=
 
-@rts    rts                                                             ;*+6
+        lda.w colour_table, x   ; look up lo-byte of address to jump to ;+4=
+        sta.w @jmp+1            ; change jump address to match          ;+4=
+        
+        pla                     ; restore colour value                  ;+3=
+@jmp    jmp colour_chars                                                ;+3=
+
+
+; NOTE: this section *must* be aligned to a 256-byte page!
+;
+.SECTION fast_write     ALIGN 256       RETURNORG
+
+; note that this routine occupies 121 bytes and a second one that follows
+; occupies the same again, totalling 242 bytes. for speed purposes, these
+; routines *must* fit into one 256-byte page so that only the low byte of
+; the addresses are required
+
+spaces_chars:
+;===============================================================================
+@chr40: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr39: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr38: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr37: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr36: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr35: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr34: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr33: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr32: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr31: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr30: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr29: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr28: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr27: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr26: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr25: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr24: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr23: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr22: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr21: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr20: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr19: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr18: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr17: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr16: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr15: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr14: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr13: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr12: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr11: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr10: sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr9:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr8:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr7:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr6:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr5:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr4:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr3:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr2:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+@chr1:  sta [zp_screen], y                                              ;+6
+        iny                                                             ;+2
+
+@rts:   rts                                                             ;*+6
+
+colour_chars:
+;===============================================================================
+@chr40: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr39: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr38: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr37: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr36: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr35: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr34: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr33: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr32: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr31: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr30: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr29: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr28: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr27: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr26: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr25: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr24: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr23: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr22: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr21: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr20: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr19: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr18: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr17: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr16: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr15: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr14: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr13: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr12: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr11: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr10: sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr9:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr8:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr7:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr6:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr5:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr4:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr3:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr2:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+@chr1:  sta [zp_colour], y                                              ;+6
+        iny                                                             ;+2
+
+@rts:   rts                                                             ;+6
+
+        ; skip enough bytes to reach the beginning of the next 256-byte page
+        .DSB 14, $00
+
+spaces_table:
+;===============================================================================
+        .BYTE   <spaces_chars@rts
+        .BYTE   <spaces_chars@chr1,     <spaces_chars@chr2
+        .BYTE   <spaces_chars@chr3,     <spaces_chars@chr4
+        .BYTE   <spaces_chars@chr5,     <spaces_chars@chr6
+        .BYTE   <spaces_chars@chr7,     <spaces_chars@chr8
+        .BYTE   <spaces_chars@chr9,     <spaces_chars@chr10
+        .BYTE   <spaces_chars@chr11,    <spaces_chars@chr12
+        .BYTE   <spaces_chars@chr13,    <spaces_chars@chr14
+        .BYTE   <spaces_chars@chr15,    <spaces_chars@chr16
+        .BYTE   <spaces_chars@chr17,    <spaces_chars@chr18
+        .BYTE   <spaces_chars@chr19,    <spaces_chars@chr20
+        .BYTE   <spaces_chars@chr21,    <spaces_chars@chr22
+        .BYTE   <spaces_chars@chr23,    <spaces_chars@chr24
+        .BYTE   <spaces_chars@chr25,    <spaces_chars@chr26
+        .BYTE   <spaces_chars@chr27,    <spaces_chars@chr28
+        .BYTE   <spaces_chars@chr29,    <spaces_chars@chr30
+        .BYTE   <spaces_chars@chr31,    <spaces_chars@chr32
+        .BYTE   <spaces_chars@chr33,    <spaces_chars@chr34
+        .BYTE   <spaces_chars@chr35,    <spaces_chars@chr36
+        .BYTE   <spaces_chars@chr37,    <spaces_chars@chr38
+        .BYTE   <spaces_chars@chr39,    <spaces_chars@chr40
+
+colour_table:
+;===============================================================================
+        .BYTE   <colour_chars@rts
+        .BYTE   <colour_chars@chr1,     <colour_chars@chr2
+        .BYTE   <colour_chars@chr3,     <colour_chars@chr4
+        .BYTE   <colour_chars@chr5,     <colour_chars@chr6
+        .BYTE   <colour_chars@chr7,     <colour_chars@chr8
+        .BYTE   <colour_chars@chr9,     <colour_chars@chr10
+        .BYTE   <colour_chars@chr11,    <colour_chars@chr12
+        .BYTE   <colour_chars@chr13,    <colour_chars@chr14
+        .BYTE   <colour_chars@chr15,    <colour_chars@chr16
+        .BYTE   <colour_chars@chr17,    <colour_chars@chr18
+        .BYTE   <colour_chars@chr19,    <colour_chars@chr20
+        .BYTE   <colour_chars@chr21,    <colour_chars@chr22
+        .BYTE   <colour_chars@chr23,    <colour_chars@chr24
+        .BYTE   <colour_chars@chr25,    <colour_chars@chr26
+        .BYTE   <colour_chars@chr27,    <colour_chars@chr28
+        .BYTE   <colour_chars@chr29,    <colour_chars@chr30
+        .BYTE   <colour_chars@chr31,    <colour_chars@chr32
+        .BYTE   <colour_chars@chr33,    <colour_chars@chr34
+        .BYTE   <colour_chars@chr35,    <colour_chars@chr36
+        .BYTE   <colour_chars@chr37,    <colour_chars@chr38
+        .BYTE   <colour_chars@chr39,    <colour_chars@chr40
 
 .ENDS

@@ -110,13 +110,13 @@ print_str:
 ;       A       (clobbered)
 ;       X       (preserved)
 ;-------------------------------------------------------------------------------
-        sta zp_print+LO         ; load the string address into our indexer
-        sty zp_print+HI
+        sta zp_screen+LO        ; load the string address into our indexer
+        sty zp_screen+HI
 
 print_str_addr:
         ;-----------------------------------------------------------------------
         ldy # 0
--       lda [zp_print], y       ; read a character
+-       lda [zp_screen], y      ; read a character
         beq +                   ; null-terminator? exit
         jsr sys_asc2pet         ; convert to system encoding
         jsr sys_chrout          ; output to screen
@@ -148,10 +148,10 @@ print_this:
         clc
         lda $0100+1, x          ; read the lo-byte from the stack
         adc # 1                 ; add 1 to move into the inline string
-        sta zp_print+LO         ; set the string address, lo-byte
+        sta zp_screen+LO        ; set the string address, lo-byte
         lda $0100+2, x          ; read the hi-byte from the stack
         adc # 0                 ; ripple the +1
-        sta zp_print+HI         ; set the string address, hi-byte
+        sta zp_screen+HI        ; set the string address, hi-byte
 
         jsr print_str_addr      ; print the string
 
@@ -226,8 +226,8 @@ print_number_word:
         bne @div10              ; } until value is 0
         
         pla
--       ora zp_print_mask       ; apply reverse-video, if enabled
-        sta [zp_print], y
+-       ora zp_screen_mask      ; apply reverse-video, if enabled
+        sta [zp_screen], y
         iny
         pla
         bne -
@@ -258,8 +258,8 @@ print_number_byte:
         cmp # '1'               ; is it a zero?
         bcs +
         lda # ' '               ; no hundreds digit: use a space instead
-+       ora zp_print_mask       ; apply reverse-video mode, if enabled
-        sta [zp_print], y       ; print the digit
++       ora zp_screen_mask      ; apply reverse-video mode, if enabled
+        sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
         ror.w @flag             ; (store carry in bit 7 and clear carry!)
@@ -282,13 +282,13 @@ print_number_byte:
         cmp # '0'               ; is the digit a zero?
         bne +                   ; if not, no padding needed,
         lda # ' '               ; otherwise use padding instead
-+       ora zp_print_mask       ; apply reverse-video, if enabled
-        sta [zp_print], y       ; print the digit
++       ora zp_screen_mask      ; apply reverse-video, if enabled
+        sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
         pla                     ; retrieve the 1s-digit
-        ora zp_print_mask       ; apply reverse-video, if enabled
-        sta [zp_print], y       ; print the digit
+        ora zp_screen_mask      ; apply reverse-video, if enabled
+        sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
         rts

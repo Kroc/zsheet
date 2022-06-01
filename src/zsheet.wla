@@ -8,13 +8,8 @@
 
 ; import machine-specific headers:
 ;-------------------------------------------------------------------------------
-.IFDEF  SYSTEM_CBM
-        .INC    "sys/cbm/cbm.wla"
-.ENDIF
-.IFDEF  CPU_65XX
-        ; macros for 6502-based systems (6502, 6510, 65C02)
-        ; to polyfill differences in instruction sets
-        .INC    "sys/cpu_65xx.wla"
+.IFDEF  SYSTEM_C64
+        .INC    "sys/c64.wla"
 .ENDIF
 
 ; ZShell memory map:
@@ -36,6 +31,10 @@
 ; to store the last-used device number
 ;
 .DEF    zs_device       ZP_KERNAL_DEV                               ;=$BA
+
+; when printing, we can easily flip between printing to the screen
+; and setting colour RAM by incrementing the hi-byte of `zp_screen`
+.DEF    COLOUR_OFFSET   $d8 - >zs_screen
 
 ;===============================================================================
 .DEF    ZS_COLS_MAX          256
@@ -74,6 +73,8 @@ zsheet_init:
         lda # VIC_BLUE
         sta VIC_BORDER
         sta VIC_BACKGROUND
+        lda # PET_CYAN
+        sta zp_print_colour
 
         ; change the VIC memory layout to position the text-screen & font
         lda # ((>zs_screen & %00111100) << 2) | ((>zs_font & %00111000) >> 2)
@@ -94,7 +95,7 @@ zsheet_init:
 
         ; make sure the bitmask for printing is clear!
         ; (this is used to do reverse-video printing)
-        sta zp_print_mask
+        sta zp_screen_mask
 
         jsr draw_screen
 
