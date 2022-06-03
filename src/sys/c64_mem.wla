@@ -18,17 +18,19 @@
         SLOT 0          $0000   "ZP"
         SLOT 1          $0100   "STACK"
         
+        SLOTSIZE        $00cc
+        SLOT 2          $0334   "LORAM"
         ; main program RAM
         ; ("ROM" in WLA-DX parlance)
         ;
         SLOTSIZE        $F7FA   ; $FFFA-$FFFF are 6502 interrupt vectors
-        SLOT 2          $0800   "MAIN"
+        SLOT 3          $0800   "MAIN"
 
         SLOTSIZE        $1000
-        SLOT 3          $C000   "HIRAM"
-        SLOT 4          $D000   "IO"
+        SLOT 4          $C000   "HIRAM"
+        SLOT 5          $D000   "IO"
         SLOTSIZE        $2000
-        SLOT 5          $E000   "KERNAL"
+        SLOT 6          $E000   "KERNAL"
 .ENDME
 
 ; the Commodore 64 has only one "bank" of RAM,

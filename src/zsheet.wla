@@ -65,6 +65,7 @@ init:
         zp_cursor       INSTANCEOF Rc
 .ENDS
 
+
 zsheet_init:
 ;===============================================================================
         ldx # $ff               ; throw away the current return stack,
@@ -92,6 +93,13 @@ zsheet_init:
         sta zp_cursor.col
         sta zp_cursor.row+LO
         sta zp_cursor.row+HI
+
+        ; clear the "work RAM", temporary variables
+        ; used that are not part of the sheet data
+        ldx #< (SECTIONEND_ZS_WORK - SECTIONSTART_ZS_WORK)
+-       dex
+        sta.w SECTIONSTART_ZS_WORK, x
+        bne -
 
         ; make sure the bitmask for printing is clear!
         ; (this is used to do reverse-video printing)

@@ -20,7 +20,18 @@
         zp_print_colour BYTE
 .ENDS
 
-;
+.RAMSECTION "ZP_COPY" SLOT "ZP" RETURNORG
+        zp_copy1        WORD
+        zp_copy2        WORD
+.ENDS
+
+.RAMSECTION "ZS_WORK" SLOT "LORAM" RETURNORG
+        ; a list of the column widths currently on screen
+        ; -- the maxmimum number of columns that can fit on screen is
+        ; based on the minimum allowed column-wdith, +1 because the
+        ; 'column width' doesn't include its right-border
+        column_pos      DS (SYS_SCREEN_COLS / (ZS_COL_WIDTH_MIN+1)) + 1
+.ENDS
 
 
 bump_addr:
@@ -672,3 +683,7 @@ colour_table:
         .BYTE   <colour_chars@chr39,    <colour_chars@chr40
 
 .ENDS
+
+
+scoll_vert:
+;===============================================================================
