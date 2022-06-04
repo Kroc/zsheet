@@ -81,10 +81,6 @@ zsheet_init:
         lda # ((>zs_screen & %00111100) << 2) | ((>zs_font & %00111000) >> 2)
         sta VIC_LAYOUT
 
-        jsr print_this
-            .BYTE   PET_CYAN, PET_CASE_LO, PET_CLEAR
-            .BYTE   NUL
-
         lda # 0
         sta zp_view.col
         sta zp_view.row+LO

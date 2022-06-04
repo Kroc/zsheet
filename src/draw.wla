@@ -20,18 +20,65 @@
         zp_print_colour BYTE
 .ENDS
 
-.RAMSECTION "ZP_COPY" SLOT "ZP" RETURNORG
-        zp_copy1        WORD
-        zp_copy2        WORD
-.ENDS
 
 .RAMSECTION "ZS_WORK" SLOT "LORAM" RETURNORG
-        ; a list of the column widths currently on screen
-        ; -- the maxmimum number of columns that can fit on screen is
-        ; based on the minimum allowed column-wdith, +1 because the
-        ; 'column width' doesn't include its right-border
+        ; a list of the column widths currently on screen:
+        ; the maxmimum number of columns that can fit on screen is based
+        ; upon the minimum allowed column-wdith, +1 because the 'column
+        ; width' doesn't include the borders that are automatically
+        ; inserted between rows
         column_pos      DS (SYS_SCREEN_COLS / (ZS_COL_WIDTH_MIN+1)) + 1
 .ENDS
+
+
+; tables for looking up the screen / colour-RAM
+; addresses for each screen row:
+;
+; TODO: this should use `BITWINDOW` to avoid crossing a page-boundary
+;       (indexed loads cost an extra cycle when crossing a page)
+.SECTION "ZS_SCREEN_ADDR"
+
+screen_addrs:
+;===============================================================================
+screen_addrs_lo:
+;-------------------------------------------------------------------------------
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE <(zs_screen + R * SYS_SCREEN_COLS)
+.ENDR
+;-------------------------------------------------------------------------------
+screen_addrs_hi:
+;-------------------------------------------------------------------------------
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE >(zs_screen + R * SYS_SCREEN_COLS)
+.ENDR
+;-------------------------------------------------------------------------------
+colour_addrs_hi:
+;-------------------------------------------------------------------------------
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE >($d800 + R * SYS_SCREEN_COLS)
+.ENDR
+
+.ENDS
+
+
+set_addr:
+;===============================================================================
+; set the screen and colour-RAM drawing addresses,
+; given a screen-row (not a sheet row!)
+;
+; in:   X       screen row to set drawing address for
+; out:  X, Y    (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        lda.w screen_addrs_lo, x
+        sta zp_screen+LO        ; the lo-bytes are shared between
+        sta zp_colour+LO        ; the screen-RAM and colour-RAM
+        lda.w screen_addrs_hi, x
+        sta zp_screen+HI
+        lda.w colour_addrs_hi, x
+        sta zp_colour+HI
+        
+        rts
 
 
 bump_addr:
@@ -41,7 +88,7 @@ bump_addr:
 ; when indexing using Y, this routine is used to bump the 16-bit address
 ; up according to the value in Y to avoid an 8-bit rollover in Y
 ;
-; in:   Y       a value to add to `zp_screen` & `zp_colour`
+; in:   Y       offset to add to `zp_screen` & `zp_colour`
 ; out:  Y       set to zero
 ;       A, X    (preserved)
 ;-------------------------------------------------------------------------------
@@ -85,22 +132,34 @@ draw_screen:
         lda zp_view.row+HI
         sta zp_drawrc.row+HI
 
+        jsr draw_tabs
         jsr draw_status_bar
+        jsr draw_formula_bar
         jmp draw_sheet          ; do a complete redraw of the view
+
+
+draw_tabs:
+;===============================================================================
+; do a complete draw of the table tabs:
+;-------------------------------------------------------------------------------
+        ldx # 0
+        jsr set_addr
+
+        clc                     ; clear reverse-video,
+        asl zp_screen_mask      ; if set
+
+        ldy # 0
+        ldx # 40
+        lda # VIC_CYAN
+        jmp fast_spaces_colour
 
 
 draw_status_bar:
 ;===============================================================================
 ; do a complete draw of the status bar:
 ;-------------------------------------------------------------------------------
-        lda #< (zs_screen + (23 * SYS_SCREEN_COLS))
-        sta zp_screen+LO
-        sta zp_colour+LO
-        lda #> (zs_screen + (23 * SYS_SCREEN_COLS))
-        sta zp_screen+HI
-        clc
-        adc # COLOUR_OFFSET
-        sta zp_colour+HI
+        ldx # SYS_SCREEN_ROWS-2 ; move to the 2nd to last screen row,
+        jsr set_addr            ; where the status bar is
         
         ; set reverse-video drawing
         lda # %10000000
@@ -109,6 +168,22 @@ draw_status_bar:
         ldy # 0                 ; starting screen column
         ldx # 40                ; print 40 spaces
         lda # VIC_CYAN          ; with this colour
+        jmp fast_spaces_colour
+
+
+draw_formula_bar:
+;===============================================================================
+; do a complete draw of the table tabs:
+;-------------------------------------------------------------------------------
+        ldx # 0
+        jsr set_addr
+
+        clc                     ; clear reverse-video,
+        asl zp_screen_mask      ; if set
+
+        ldy # 0
+        ldx # 40
+        lda # VIC_CYAN
         jmp fast_spaces_colour
 
 
@@ -126,19 +201,17 @@ draw_col_headers:
 ; draws the column headers across the screen
 ;
 ;-------------------------------------------------------------------------------
-        lda #< (zs_screen + (1 * SYS_SCREEN_COLS))
-        sta zp_screen+LO
-        sta zp_colour+LO
-        lda #> (zs_screen + (1 * SYS_SCREEN_COLS))
-        sta zp_screen+HI
-        clc
-        adc # COLOUR_OFFSET
-        sta zp_colour+HI
+        ; set the screen address to the 2nd screen row
+        ldx # 1
+        jsr set_addr
 
         ; left-hand offset, this needs to be based upon
         ; the number of characters in the view's first row!
         ;
-        ; fill in the corner bit of the sheet
+        ; fill in the corner bit of the sheet:
+        ;
+        sec                     ; enable reverse-video printing
+        ror zp_screen_mask
         ldy # 0                 ; start screen col...
         ldx # 3                 ; width...
         lda # VIC_CYAN          ; colour...
@@ -220,7 +293,7 @@ draw_col_header:
         ; draw header background:
         ; note that X already contains column width to draw
 +       lda # VIC_CYAN
-        jsr fast_spaces         ; NOTE: does not modify carry!
+        jsr fast_spaces_colour  ; NOTE: does not modify carry!
         bcc +
         
         ; print the right-border:
@@ -298,6 +371,13 @@ draw_row:
         ldy # 0                 ; start on the left edge of the screen
         jsr draw_row_number
         asl zp_screen_mask      ; disable reverse-video drawing
+        
+        ; set colour
+        ; TODO: should this happen as part of number printing?
+        ldy # 0
+        ldx # 3
+        lda # VIC_CYAN
+        jsr fast_colour
 
         lda zp_view.col
         sta zp_drawrc.col
@@ -682,6 +762,12 @@ colour_table:
         .BYTE   <colour_chars@chr37,    <colour_chars@chr38
         .BYTE   <colour_chars@chr39,    <colour_chars@chr40
 
+.ENDS
+
+
+.RAMSECTION "ZP_COPY" SLOT "ZP" RETURNORG
+        zp_copy1        WORD
+        zp_copy2        WORD
 .ENDS
 
 
