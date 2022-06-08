@@ -123,8 +123,14 @@ input:
         lda zp_view.row+LO
         cmp # $100-21 ; (height of view)
         beq @rts
+
         inc zp_view.row+LO
-        jmp draw_screen
+        ldx # 20                ; number of rows to copy upwards
+        jsr scroll_down
+        lda zp_view.row+LO
+        adc # 20
+        sta zp_drawrc.row+LO
+        jmp draw_row
 
 @up     cmp # PET_CRSR_UP
         ;-----------------------------------------------------------------------

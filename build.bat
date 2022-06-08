@@ -3,11 +3,11 @@ CLS & TITLE Building ZSheet!...
 CD %~dp0
 ECHO:
 
-SET WLA_6510="bin\wla-dx\wla-6510.exe"   -i -x -I "src"
+SET WLA_6502="bin\wla-dx\wla-6502.exe"   -i -x -I "src"
 SET WLA_LINK="bin\wla-dx\wlalink.exe"    -i -A -S
 
 REM # combine the CPU assembler and system symbols for a C64
-SET WLA_C64=%WLA_6510% -D SYSTEM_CBM=1 -D SYSTEM_C64=1
+SET WLA_C64=%WLA_6502% -D SYSTEM_CBM=1 -D SYSTEM_C64=1
 REM # packer for compressing programs
 SET EXOMIZER="bin\exomizer\exomizer.exe"
 REM # utility to pack C64 binaries onto a C64 disk-image
@@ -22,6 +22,8 @@ ECHO ========================================
        "zsheet.wla"
 
 IF ERRORLEVEL 1 EXIT /B 1
+
+ECHO:
 
 %WLA_LINK% -v -t CBMPRG ^
     -b "link_c64.ini" ^

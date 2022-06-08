@@ -73,9 +73,18 @@ print_number_word:
 
 print_number_byte:
 ;===============================================================================
-; this routine for converting a byte to decimal digits is adapted from:
-; <https://codebase64.org/doku.php?id=base:tiny_.a_to_ascii_routine>
+; print a single byte value as a space-padded decimal:
+; (3 characters are always printed)
 ;
+; this routine for converting a byte to decimal digits is adapted from:
+; <https://codebase64.org/doku.php?id=base:tiny_.a_to_ascii_routine>,
+; Kroc added the space-padding
+;
+; in:   A       binary number 0-255 to print in decimal
+;       Y       offset from `zp_screen` to print at
+; out:  Y       the screen offset is moved forward
+;               by the number of printed chars
+;       A, X    (clobbered)
 ;-------------------------------------------------------------------------------
         ; hundreds:
         ;-----------------------------------------------------------------------
@@ -101,7 +110,7 @@ print_number_byte:
         ror.w @flag             ; (store carry in bit 7 and clear carry!)
         pla                     ; retrieve the working remainder
 
-        ; tens & ones:
+        ; tens:
         ;-----------------------------------------------------------------------
         ldx # '9'+1             ; decrement using an ASCII digit!
 -       dex                     ; decrement the tens-digit,
@@ -122,6 +131,8 @@ print_number_byte:
         sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
+        ; ones:
+        ;-----------------------------------------------------------------------
         pla                     ; retrieve the 1s-digit
         ora zp_screen_mask      ; apply reverse-video, if enabled
         sta [zp_screen], y      ; print the digit

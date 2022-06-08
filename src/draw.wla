@@ -7,19 +7,25 @@
 ;===============================================================================
 .RAMSECTION "ZP_SCREEN" SLOT "ZP" RETURNORG
         ;-----------------------------------------------------------------------
+        ; a destination pointer for copying screen rows
+        zp_screen_copy  WORD
         ; a vector specifically for putting characters to screen
         ; -- this is always the current drawing address on screen
         zp_screen       WORD
-        ; a bitmask ORed with characters before being printed;
-        ; use %10000000 ($80) for reverse-video and %01000000 to force capitals
-        zp_screen_mask  BYTE
+        ; a destination pointer for copying colour-RAM rows
+        zp_colour_copy  WORD
         ; as with `zp_screen` this is the position in colour RAM.
         ; the two are kept in sync when using `bump_addr`
         zp_colour       WORD
+.ENDS
+
+.RAMSECTION "ZP_MODE" SLOT "ZP" RETURNORG
+        ; a bitmask ORed with characters before being printed;
+        ; use %10000000 ($80) for reverse-video and %01000000 to force capitals
+        zp_screen_mask  BYTE
         ; current printing colour
         zp_print_colour BYTE
 .ENDS
-
 
 .RAMSECTION "ZS_WORK" SLOT "LORAM" RETURNORG
         ; a list of the column widths currently on screen:
@@ -34,9 +40,8 @@
 ; tables for looking up the screen / colour-RAM
 ; addresses for each screen row:
 ;
-; TODO: this should use `BITWINDOW` to avoid crossing a page-boundary
-;       (indexed loads cost an extra cycle when crossing a page)
-.SECTION "ZS_SCREEN_ADDR"
+.SECTION "ZS_SCREEN_ADDR" BITWINDOW 8
+;###############################################################################
 
 screen_addrs:
 ;===============================================================================
@@ -58,6 +63,7 @@ colour_addrs_hi:
         .BYTE >($d800 + R * SYS_SCREEN_COLS)
 .ENDR
 
+;###############################################################################
 .ENDS
 
 
@@ -80,6 +86,50 @@ set_addr:
         
         rts
 
+set_addr_copy:
+;===============================================================================
+        ; set the main addresses first, and then fall through to copy them
+        jsr set_addr
+
+copy_addr:
+;===============================================================================
+; copies the current screen and colour RAM addresses used for a block copy:
+;-------------------------------------------------------------------------------
+        ldy # 2
+-       lda zp_screen-1, y
+        sta zp_screen_copy-1, y
+        lda zp_colour-1, y
+        sta zp_colour_copy-1, y
+        dey
+        bne -
+
+        rts
+
+
+bump_addr_copy:
+;===============================================================================
+; bump the main printing addresses forward and the copy addresses to match:
+;
+; when indexing using Y, this routine is used to bump the 16-bit source &
+; destination address up according to the value in Y to avoid an 8-bit
+; rollover in Y
+;
+; in:   Y       offset to add to `zp_screen(_copy)` & `zp_colour(_copy)`
+; out:  Y       set to zero
+;       X       (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        tya                     ; take current offset
+        clc                     ; prepare for math!
+        adc zp_screen_copy+LO   ; add Y to the address lo-byte
+        bcc +                   ; if it doesn't overflow, skip the hi-byte
+        inc zp_screen_copy+HI   ; increment the print address hi-byte,
+        inc zp_colour_copy+HI   ; and the colour address likewise
++       sta zp_screen_copy+LO   ; update the address lo-byte --
+        sta zp_colour_copy+LO   ; these are the same between print & colour
+
+        ; fall through to bump the main addresses and reset Y
+        ;
 
 bump_addr:
 ;===============================================================================
@@ -90,17 +140,15 @@ bump_addr:
 ;
 ; in:   Y       offset to add to `zp_screen` & `zp_colour`
 ; out:  Y       set to zero
-;       A, X    (preserved)
+;       X       (preserved)
+;       A       (clobbered)
 ;-------------------------------------------------------------------------------
-        pha                     ; preserve A
-        
         tya                     ; take current offset
         clc                     ; prepare for math!
         adc zp_screen+LO        ; add Y to the address lo-byte
         bcc +                   ; if it doesn't overflow, skip the hi-byte
         inc zp_screen+HI        ; increment the print address hi-byte,
         inc zp_colour+HI        ; and the colour address likewise
-        clc                     ; (carry must be cleared for the next bit)
 +       sta zp_screen+LO        ; update the address lo-byte --
         sta zp_colour+LO        ; these are the same between print & colour
         
@@ -108,11 +156,10 @@ bump_addr:
         ; reflects the same address as before!
         ldy # 0
         
-        pla                     ; restore A
         rts
 
 
-.RAMSECTION "zp_drawrc" SLOT "ZP" RETURNORG
+.RAMSECTION "ZP_DRAWRC" SLOT "ZP" RETURNORG
         ;-----------------------------------------------------------------------
         zp_drawrc       INSTANCEOF Rc
 .ENDS
@@ -242,7 +289,6 @@ draw_col_headers:
         ;
         tya                     ; (current screen pos)
         ; add the inverted value of the screen width
-        ; (note that carry happens to be clear due to earlier CPY)
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
         tax
@@ -336,16 +382,12 @@ draw_rows:
 ; draw a series of rows:
 ;
 ;-------------------------------------------------------------------------------
-        lda zp_drawrc.row+LO
-        tax
-
-        clc
-        adc # 21
-        sta.w @cpx+1
+        ldx # 21                ; number of rows to draw
+        lda zp_drawrc.row+LO    ; start from the row defined in `zp_drawrc`
 
 -       jsr draw_row
-        inx
-@cpx    cpx # 21
+        inc zp_drawrc.row+LO    ; move to next row
+        dex
         bne -
 
         rts
@@ -353,32 +395,30 @@ draw_rows:
 
 draw_row:
 ;===============================================================================
-; draws a screen row, including the row number:
+; draws a full sheet row, including the row number:
 ; this routine is used to fill in a row after scrolling vertically
 ;
 ; in:   X       row number; TODO: this to be expanded to 16-bit
-; out:  Y       Y, screen-column, is reset to 0 and `zp_screen`
-;               is moved forward to the next screen row
+; out:  Y       Y, screen-column, is reset to 0 and `zp_screen` /
+;               `zp_colour` are moved forward to the next screen row
 ;       X       (preserved)
 ;       A       (clobbered)
 ;-------------------------------------------------------------------------------
-        stx zp_x                ; backup row number
-
-        ; enable reverse video for column number
-        lda # %10000000
-        sta zp_screen_mask
+        stx zp_x                ; backup X
 
         ldy # 0                 ; start on the left edge of the screen
+        lda zp_drawrc.row+LO    ; TODO: expand to 16-bit
         jsr draw_row_number
-        asl zp_screen_mask      ; disable reverse-video drawing
         
-        ; set colour
-        ; TODO: should this happen as part of number printing?
+        ; set colour:
         ldy # 0
         ldx # 3
         lda # VIC_CYAN
+        asl zp_screen_mask      ; disable reverse-video drawing
         jsr fast_colour
 
+        ; reset the column number to where the view
+        ; is currently scrolled horizontally
         lda zp_view.col
         sta zp_drawrc.col
         
@@ -394,7 +434,7 @@ draw_row:
         ; when the cells hit the edge of the screen, Y will already be equal
         ; to the screen width and `bump_addr` will update `zp_screen` and wrap
         ; Y back to zero. if we hit the last column ("IV") before hitting the
-        ;  edge of the screen, we need to clear the right-hand side of the
+        ; edge of the screen, we need to clear the right-hand side of the
         ; screen to avoid grabage from the previous scroll
         ;
         ; calculate the remaining number of screen cols:
@@ -403,7 +443,6 @@ draw_row:
         ;
         tya                     ; (current screen pos)
         ; add the inverted value of the screen width
-        ; (note that carry happens to be clear due to earlier CPY)
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
         tax
@@ -419,7 +458,11 @@ draw_row:
 
 draw_row_number:
 ;===============================================================================
-        txa
+        ; enable reverse video for column number
+        lda # %10000000
+        sta zp_screen_mask
+        
+        lda zp_drawrc.row+LO
         jmp print_number_byte
 
 
@@ -486,7 +529,7 @@ fast_spaces_colour:
         jsr fast_colour
 
         ; restore Y to go back to the start position and draw the spaces
-@ldy    ldy # $00
+@ldy    ldy # 0
 
 fast_spaces:                                                            ;+6=6
 ;===============================================================================
@@ -535,7 +578,7 @@ fast_colour:                                                            ;+6=6
 ; NOTE: this section *must* be aligned to a 256-byte page!
 ;
 .SECTION fast_write     ALIGN 256       RETURNORG
-
+;###############################################################################
 ; note that this routine occupies 121 bytes and a second one that follows
 ; occupies the same again, totalling 242 bytes. for speed purposes, these
 ; routines *must* fit into one 256-byte page so that only the low byte of
@@ -761,15 +804,130 @@ colour_table:
         .BYTE   <colour_chars@chr35,    <colour_chars@chr36
         .BYTE   <colour_chars@chr37,    <colour_chars@chr38
         .BYTE   <colour_chars@chr39,    <colour_chars@chr40
-
+;###############################################################################
 .ENDS
 
 
-.RAMSECTION "ZP_COPY" SLOT "ZP" RETURNORG
-        zp_copy1        WORD
-        zp_copy2        WORD
-.ENDS
-
-
-scoll_vert:
+scroll_down:
 ;===============================================================================
+; copy a series of rows upwards, effectively scrolling the sheet down:
+;
+; (this is currently hard-coded whilst I work out the details)
+;-------------------------------------------------------------------------------
+        ; we could copy 40 columns each loop but bumping the source and
+        ; destination addresses forward is expensive so instead we do as many
+        ; rows as will fit within an 8-bit index (i.e. 6, for 40 columns)
+        ;
+        lda.w copy_rows_remainder-1, x
+        sta.w @rem+1
+        ; given the number of rows to copy, lookup in a table the number of
+        ; complete iterations required (6 rows per iteration for 40 columns)
+        lda.w copy_rows_iterations-1, x
+        ; if this is zero, then there is less than one full iteration
+        ; of chars to copy (e.g. <6 rows for 40 columns)
+        beq @rem
+        ; write this count into the loop
+        sta.w @ldx+1
+        
+        ; set the source and destination addresses to the 3rd row
+        ldx # 3
+        jsr set_addr_copy
+        ; now set the source address to the previous row
+        dex
+        jsr set_addr
+
+@ldx    ldx # 1
+        ;-----------------------------------------------------------------------
+@copy:  ldy # 0
+-       lda [zp_screen_copy], y
+        sta [zp_screen], y
+        lda [zp_colour_copy], y
+        sta [zp_colour], y
+        ; TODO: can we do this in reverse instead?
+        iny
+        cpy #< (256 / SYS_SCREEN_COLS) * 40
+        bcc -
+
+        ; bump the source and destination addresses
+        ; forward as Y has reached its limit
+        jsr bump_addr_copy
+
+        dex
+        bne @copy
+
+        ; copy remainder
+        ;-----------------------------------------------------------------------
+@rem:   ldx # 0
+        beq @rts
+
+-       lda [zp_screen_copy], y
+        sta [zp_screen], y
+        lda [zp_colour_copy], y
+        sta [zp_colour], y
+        iny
+        dex
+        bne -
+
+        jmp bump_addr_copy
+
+@rts:   rts
+
+;;        ldy # 0
+;;@copy:
+;;@srcscr lda zs_screen, y
+;;@dstscr sta zs_screen, y
+;;@srcclr lda $d800, y
+;;@dstclr sta $d800, y
+;;        iny
+;;        cpy #< (256 / SYS_SCREEN_COLS) * 40
+;;        bcc @copy
+;;
+;;        clc
+;;        tya
+;;        adc @srcscr+1
+;;        bcc +
+;;        inc @srcscr+2
+;;        inc @srcclr+2
+;;+       sta @srcscr+1
+;;        sta @srcclr+1
+;;        clc
+;;        tya
+;;        adc @dstscr+1
+;;        bcc +
+;;        inc @dstscr+2
+;;        inc @dstclr+2
+;;+       sta @dstscr+1
+;;        sta @dstclr+1
+
+
+.SECTION "COPYROWS_TABLE" BITWINDOW 8
+;###############################################################################
+.DEF    _ROWS_PER_ITER  floor( 256 / SYS_SCREEN_COLS )
+
+;;copy_rows_index:
+;;        ;-----------------------------------------------------------------------
+;;        ; a small table of multiples of screen widths that fit within 1 byte
+;;        ; e.g. with a 40-column screen: 40, 80, 120, 160, 200, 240; meaning
+;;        ; that up to 6 screen rows can be traversed within a one byte index
+;;        ;
+;;.REPEAT _ROWS_PER_ITER INDEX I
+;;        .BYTE I * 40
+;;.ENDR
+
+copy_rows_iterations:
+        ;-----------------------------------------------------------------------
+        ; for a given number of rows, how many times a full-byte's worth of
+        ; rows should be processed. the remainder is given in the next table
+        ;
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE R / _ROWS_PER_ITER
+.ENDR
+
+copy_rows_remainder:
+        ;-----------------------------------------------------------------------
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE (R+1) * SYS_SCREEN_COLS # _ROWS_PER_ITER * SYS_SCREEN_COLS
+.ENDR
+
+;###############################################################################
+.ENDS
