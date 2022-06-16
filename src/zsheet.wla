@@ -15,11 +15,15 @@
 ; ZShell memory map:
 ;===============================================================================
 ;
-;  $0   $1000                                        $C000            $FFFF
-;  +--+-+--------------------------------------------+----------------+
-;  |  | | SHEET DATA                                 | CODE           |
-;  +--+-+--------------------------------------------+----------------+
-;     $0800 < font
+;  $0   $1000                                        $C000     $E000  $FFFF
+;  +--+-+--------------------------------------------+----+----+--------+
+;  |  | | SHEET DATA                                 | C1 | C2 | C3     |
+;  +--+-+--------------------------------------------+----+----+--------+
+;     $0800 < font                                        $D000
+;
+;  C1 = code, drawing
+;  C2 = code, cannot use I/O
+;  C3 = code, cannot use KERNAL
 ;
 .DEF    zs_screen       $0400   ; screen-RAM
 .DEF    zs_font         $0800   ; custom font
@@ -55,17 +59,6 @@ init:
 .INC    "draw.wla"              ; drawing to the screen
 
 
-.RAMSECTION "ZP_CURSOR" SLOT "ZP"       RETURNORG
-        ;-----------------------------------------------------------------------
-        ; current scroll offset of the spreadsheet view
-        zp_view         INSTANCEOF Rc
-        ; current cursor position
-        ; TODO: to support selection ranges, and even disparate selections;
-        ; (e.g. "A3,C6,B9") this will have to be a lot more complex
-        zp_cursor       INSTANCEOF Rc
-.ENDS
-
-
 zsheet_init:
 ;===============================================================================
         ldx # $ff               ; throw away the current return stack,
@@ -81,14 +74,18 @@ zsheet_init:
         lda # ((>zs_screen & %00111100) << 2) | ((>zs_font & %00111000) >> 2)
         sta VIC_LAYOUT
 
+        ; make sure the bitmask for printing is clear!
+        ; (this is used to do reverse-video printing)
+        sta zp_screen_mask
+
         lda # 0
         sta zp_view.col
         sta zp_view.row+LO
         sta zp_view.row+HI
 
-        sta zp_cursor.col
-        sta zp_cursor.row+LO
-        sta zp_cursor.row+HI
+        sta zp_view.cursor.col
+        sta zp_view.cursor.row+LO
+        sta zp_view.cursor.row+HI
 
         ; clear the "work RAM", temporary variables
         ; used that are not part of the sheet data
@@ -97,10 +94,20 @@ zsheet_init:
         sta.w SECTIONSTART_ZS_WORK, x
         bne -
 
-        ; make sure the bitmask for printing is clear!
-        ; (this is used to do reverse-video printing)
-        sta zp_screen_mask
+        ; set the position/size
+        ; of the default view:
+        ;
+        lda # 2                 ; sheet starts on the second screen row
+        sta zp_view.y
+        ; number of screen-rows in the view:
+        ; height of the screen sans two for the table tabs,
+        ; row columns and another two for the status & formula bar
+        lda # SYS_SCREEN_ROWS - 2 - 2
+        sta zp_view.h
 
+        ; with everything configured, do a full screen redraw:
+        ; we don't need to erase the screen beforehand as this routine
+        ; will overwrite every cell on the screen in due course
         jsr draw_screen
 
 
@@ -116,56 +123,76 @@ input:
 -       jsr KERNAL_GETIN_ADDR
         beq -
 
-@down   cmp # PET_CRSR_DN
+@down:  cmp # PET_CRSR_DN
         ;-----------------------------------------------------------------------
         bne @up
 
-        lda zp_view.row+LO
-        cmp # $100-21 ; (height of view)
-        beq @rts
+        ; when scrolling down we need to stop scrolling when the last row
+        ; hits the *bottom* of the view, accounting for the view height
+        ;
+        ; since the bottom of the sheet is row 255 (0-based), subtract the
+        ; height of the view to work out the row number at the top of the
+        ; view that causes row 255 to appear at the bottom of the view
+        ;
+        sec                     ; clear borrow for subtraction
+        lda # $ff               ; prepare for 255-H
+        sbc zp_view.h           ; subtract the view height
+        sta.w @dnrow+1          ; write this into our compare
+        inc.w @dnrow+1          ; compensate to make $100-H
 
-        inc zp_view.row+LO
-        ldx # 20                ; number of rows to copy upwards
-        jsr scroll_down
         lda zp_view.row+LO
-        adc # 20
+@dnrow  cmp # $ff
+        bcs @rts
+
+        ; do the hard scroll, copying the screen rows up to make room
+        ; at the bottom of the screen. this routine intentionally leaves
+        ; `zp_print` on the last row, ready to be filled in
+        jsr scroll_view_down
+        
+        clc
+        lda zp_view.row+LO
+        inc zp_view.row+LO
+        adc zp_view.h
         sta zp_drawrc.row+LO
         jmp draw_row
+        rts
 
-@up     cmp # PET_CRSR_UP
+@up:    cmp # PET_CRSR_UP
         ;-----------------------------------------------------------------------
         bne @right
 
         ; if at row zero, cannot scroll up!
         lda zp_view.row+LO
-        bne +
-        rts
+        beq @rts
 
-+       dec zp_view.row+LO
-        jmp draw_screen
+        dec zp_view.row+LO
+        ;;ldx zp_view.h           ; number of rows to copy upwards
+        jsr scroll_view_up
+        
+        lda zp_view.row+LO
+        sta zp_drawrc.row+LO
+        jmp draw_row
 
-@right  cmp # PET_CRSR_RT
+@right: cmp # PET_CRSR_RT
         ;-----------------------------------------------------------------------
         bne @left
         
         ldx zp_view.col
         inx
-        bne +
-        rts
+        beq @rts
         
-+       stx zp_view.col
+        stx zp_view.col
         jmp draw_screen
 
-@left   cmp # PET_CRSR_LT
+@left:  cmp # PET_CRSR_LT
         ;-----------------------------------------------------------------------
         bne @rts
         
         ; if at column zero, cannot scroll left!
         lda zp_view.col
-        bne +
-        rts
+        beq @rts
 
-+       dec zp_view.col
+        dec zp_view.col
         jmp draw_screen
 
-@rts    rts
+@rts:   rts

@@ -3,10 +3,23 @@
 ; how you please as long as you retain the copyright notice
 ;
 
-; RAM variables:
-;===============================================================================
+; a view is the size/position of a window into the current sheet
+;
+.STRUCT View
+        col             BYTE    ; top-left column in view (scroll-offset)
+        row             WORD    ; top-left row in view (scroll-offset)
+        y               BYTE    ; screen-row the view begins at
+        h               BYTE    ; number of screen-rows visible in the view
+        ; TODO: to support selection ranges, and even disparate selections;
+        ; (e.g. "A3,C6,B9") this will have to be a lot more complex
+        cursor          INSTANCEOF Rc
+.ENDST
+
+.RAMSECTION "ZP_VIEWS"  SLOT "ZP" RETURNORG
+        zp_view         INSTANCEOF View
+.ENDS
+
 .RAMSECTION "ZP_SCREEN" SLOT "ZP" RETURNORG
-        ;-----------------------------------------------------------------------
         ; a destination pointer for copying screen rows
         zp_screen_copy  WORD
         ; a vector specifically for putting characters to screen
@@ -146,11 +159,11 @@ bump_addr:
         tya                     ; take current offset
         clc                     ; prepare for math!
         adc zp_screen+LO        ; add Y to the address lo-byte
-        bcc +                   ; if it doesn't overflow, skip the hi-byte
+        bcc +                   ; no overflow? skip hi-bytes
         inc zp_screen+HI        ; increment the print address hi-byte,
         inc zp_colour+HI        ; and the colour address likewise
 +       sta zp_screen+LO        ; update the address lo-byte --
-        sta zp_colour+LO        ; these are the same between print & colour
+        sta zp_colour+LO        ; shared between print & colour
         
         ; Y is set back to zero so that `lda [zp_screen], y`
         ; reflects the same address as before!
@@ -196,7 +209,7 @@ draw_tabs:
         asl zp_screen_mask      ; if set
 
         ldy # 0
-        ldx # 40
+        ldx # SYS_SCREEN_COLS
         lda # VIC_CYAN
         jmp fast_spaces_colour
 
@@ -212,8 +225,9 @@ draw_status_bar:
         lda # %10000000
         sta zp_screen_mask
 
-        ldy # 0                 ; starting screen column
-        ldx # 40                ; print 40 spaces
+        ; print spaces:
+        ldy # 0                 ; starting at the left,
+        ldx # SYS_SCREEN_COLS   ; across the whole screen,
         lda # VIC_CYAN          ; with this colour
         jmp fast_spaces_colour
 
@@ -229,7 +243,7 @@ draw_formula_bar:
         asl zp_screen_mask      ; if set
 
         ldy # 0
-        ldx # 40
+        ldx # SYS_SCREEN_COLS
         lda # VIC_CYAN
         jmp fast_spaces_colour
 
@@ -382,7 +396,7 @@ draw_rows:
 ; draw a series of rows:
 ;
 ;-------------------------------------------------------------------------------
-        ldx # 21                ; number of rows to draw
+        ldx zp_view.h           ; number of rows to draw (1-based)
         lda zp_drawrc.row+LO    ; start from the row defined in `zp_drawrc`
 
 -       jsr draw_row
@@ -808,6 +822,11 @@ colour_table:
 .ENDS
 
 
+scroll_view_down:
+;===============================================================================
+        ldx zp_view.h           ; number of rows to scroll
+        dex                     ; less one because a new row will be drawn in
+
 scroll_down:
 ;===============================================================================
 ; copy a series of rows upwards, effectively scrolling the sheet down:
@@ -829,10 +848,12 @@ scroll_down:
         ; write this count into the loop
         sta.w @ldx+1
         
-        ; set the source and destination addresses to the 3rd row
-        ldx # 3
+        ; set the source and destination addresses
+        ; to the 2nd row of the view
+        ldx zp_view.y
+        inx
         jsr set_addr_copy
-        ; now set the source address to the previous row
+        ; now set the source address to the first row
         dex
         jsr set_addr
 
@@ -845,7 +866,7 @@ scroll_down:
         sta [zp_colour], y
         ; TODO: can we do this in reverse instead?
         iny
-        cpy #< (256 / SYS_SCREEN_COLS) * 40
+        cpy # floor(256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
         bcc -
 
         ; bump the source and destination addresses
@@ -872,6 +893,57 @@ scroll_down:
 
 @rts:   rts
 
+
+scroll_view_up:
+;===============================================================================
+        ; we need to start with copying the 2nd-to-last row down to the
+        ; last row and then walk up the screen, copying rows down by one
+        clc
+        lda.b zp_view.y
+        adc.b zp_view.h
+        tax
+        dex
+        dex
+        jsr set_addr_copy
+        ; now set the source address to the previous row
+        inx
+        jsr set_addr
+
+        ldx zp_view.h
+        dex
+        ;-----------------------------------------------------------------------
+@copy:  ldy # SYS_SCREEN_COLS-1
+-       lda [zp_screen_copy], y
+        sta [zp_screen], y
+        lda [zp_colour_copy], y
+        sta [zp_colour], y
+        dey
+        bpl -
+
+@next:  sec
+        lda.b zp_screen+LO
+        sbc # SYS_SCREEN_COLS
+        bcs +
+        dec.b zp_screen+HI
+        dec.b zp_colour+HI
+        sec                     ; set carry only when needed to save 2 cycles
++       sta.b zp_screen+LO
+        sta.b zp_colour+LO
+
+        lda.b zp_screen_copy+LO
+        sbc # SYS_SCREEN_COLS
+        bcs +
+        dec.b zp_screen_copy+HI
+        dec.b zp_colour_copy+HI
++       sta.b zp_screen_copy+LO
+        sta.b zp_colour_copy+LO
+
+        dex
+        bne @copy
+
+        rts
+
+
 ;;        ldy # 0
 ;;@copy:
 ;;@srcscr lda zs_screen, y
@@ -879,7 +951,7 @@ scroll_down:
 ;;@srcclr lda $d800, y
 ;;@dstclr sta $d800, y
 ;;        iny
-;;        cpy #< (256 / SYS_SCREEN_COLS) * 40
+;;        cpy #< (256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
 ;;        bcc @copy
 ;;
 ;;        clc
@@ -911,7 +983,7 @@ scroll_down:
 ;;        ; that up to 6 screen rows can be traversed within a one byte index
 ;;        ;
 ;;.REPEAT _ROWS_PER_ITER INDEX I
-;;        .BYTE I * 40
+;;        .BYTE I * SYS_SCREEN_COLS
 ;;.ENDR
 
 copy_rows_iterations:
