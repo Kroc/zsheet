@@ -88,6 +88,8 @@ zsheet_init:
         sta zp_view.cursor.col
         sta zp_view.cursor.row+LO
         sta zp_view.cursor.row+HI
+        sta zp_col_sel
+        sta zp_row_sel
 
         ; clear the "work RAM", temporary variables
         ; used that are not part of the sheet data

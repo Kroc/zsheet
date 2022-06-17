@@ -9,13 +9,18 @@
         row             WORD    ; top-left row in view (scroll-offset)
         y               BYTE    ; screen-row the view begins at
         h               BYTE    ; number of screen-rows visible in the view
-        ; TODO: to support selection ranges, and even disparate selections;
-        ; (e.g. "A3,C6,B9") this will have to be a lot more complex
         cursor          INSTANCEOF Rc
 .ENDST
 
 .RAMSECTION "ZP_VIEWS"  SLOT "ZP" RETURNORG
         zp_view         INSTANCEOF View
+.ENDS
+
+.RAMSECTION "ZP_COPY"   SLOT "ZP" RETURNORG
+        ; a destination pointer for copying screen rows
+        zp_screen_copy  WORD
+        ; a destination pointer for copying colour-RAM rows
+        zp_colour_copy  WORD
 .ENDS
 
 
