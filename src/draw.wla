@@ -2,23 +2,6 @@
 ; licenced under a MIT licence; you may reuse and modify this code
 ; how you please as long as you retain the copyright notice
 ;
-
-; a view is the size/position of a window into the current sheet
-;
-.STRUCT View
-        col             BYTE    ; top-left column in view (scroll-offset)
-        row             WORD    ; top-left row in view (scroll-offset)
-        y               BYTE    ; screen-row the view begins at
-        h               BYTE    ; number of screen-rows visible in the view
-        ; TODO: to support selection ranges, and even disparate selections;
-        ; (e.g. "A3,C6,B9") this will have to be a lot more complex
-        cursor          INSTANCEOF Rc
-.ENDST
-
-.RAMSECTION "ZP_VIEWS"  SLOT "ZP" RETURNORG
-        zp_view         INSTANCEOF View
-.ENDS
-
 .RAMSECTION "ZP_SCREEN" SLOT "ZP" RETURNORG
         ; a destination pointer for copying screen rows
         zp_screen_copy  WORD
@@ -35,7 +18,7 @@
 .RAMSECTION "ZP_MODE" SLOT "ZP" RETURNORG
         ; a bitmask ORed with characters before being printed;
         ; use %10000000 ($80) for reverse-video and %01000000 to force capitals
-        zp_screen_mask  BYTE
+        zp_print_mask   BYTE
         ; current printing colour
         zp_print_colour BYTE
 .ENDS
@@ -172,6 +155,43 @@ bump_addr:
         rts
 
 
+highlight_chars:
+;===============================================================================
+; convert some characters on screen into reverse-video
+; (e.g. for cell cursor)
+;
+; in:   Y       starting offset from screen row, i.e. x-pos on screen
+;       X       number of character cells to reverse (1-based)
+;-------------------------------------------------------------------------------
+-       lda [zp_screen], y
+        ora # %10000000
+        sta [zp_screen], y
+        lda # VIC_YELLOW
+        sta [zp_colour], y
+        iny
+        dex
+        bne -
+        rts
+
+
+unlight_chars:
+;===============================================================================
+; remove highlight from characters:
+;
+; in:   Y       starting offset from screen row, i.e. x-pos on screen
+;       X       number of character cells to un-reverse (1-based)
+;-------------------------------------------------------------------------------
+-       lda [zp_screen], y
+        and %01111111
+        sta [zp_screen], y
+        lda # VIC_CYAN
+        sta [zp_colour], y
+        iny
+        dex
+        bne -
+        rts
+
+
 .RAMSECTION "ZP_DRAWRC" SLOT "ZP" RETURNORG
         ;-----------------------------------------------------------------------
         zp_drawrc       INSTANCEOF Rc
@@ -183,19 +203,10 @@ draw_screen:
 ; does a complete screen draw
 ;
 ;-------------------------------------------------------------------------------
-        ; copy the current view row/column into
-        ; the row/col reference used during drawing
-        lda zp_view.col
-        sta zp_drawrc.col
-        lda zp_view.row+LO
-        sta zp_drawrc.row+LO
-        lda zp_view.row+HI
-        sta zp_drawrc.row+HI
-
         jsr draw_tabs
         jsr draw_status_bar
         jsr draw_formula_bar
-        jmp draw_sheet          ; do a complete redraw of the view
+        jmp draw_view           ; do a complete redraw of the view
 
 
 draw_tabs:
@@ -206,7 +217,7 @@ draw_tabs:
         jsr set_addr
 
         clc                     ; clear reverse-video,
-        asl zp_screen_mask      ; if set
+        asl zp_print_mask       ; if set
 
         ldy # 0
         ldx # SYS_SCREEN_COLS
@@ -223,7 +234,7 @@ draw_status_bar:
         
         ; set reverse-video drawing
         lda # %10000000
-        sta zp_screen_mask
+        sta zp_print_mask
 
         ; print spaces:
         ldy # 0                 ; starting at the left,
@@ -240,7 +251,7 @@ draw_formula_bar:
         jsr set_addr
 
         clc                     ; clear reverse-video,
-        asl zp_screen_mask      ; if set
+        asl zp_print_mask       ; if set
 
         ldy # 0
         ldx # SYS_SCREEN_COLS
@@ -248,11 +259,20 @@ draw_formula_bar:
         jmp fast_spaces_colour
 
 
-draw_sheet:
+draw_view:
 ;===============================================================================
 ; does a complete draw of the spreadsheet view
 ;
 ;-------------------------------------------------------------------------------
+        ; copy the current view row/column into
+        ; the row/col reference used during drawing
+        lda zp_view.col
+        sta zp_drawrc.col
+        lda zp_view.row+LO
+        sta zp_drawrc.row+LO
+        lda zp_view.row+HI
+        sta zp_drawrc.row+HI
+
         jsr draw_col_headers
         jmp draw_rows
 
@@ -272,7 +292,7 @@ draw_col_headers:
         ; fill in the corner bit of the sheet:
         ;
         sec                     ; enable reverse-video printing
-        ror zp_screen_mask
+        ror zp_print_mask
         ldy # 0                 ; start screen col...
         ldx # 3                 ; width...
         lda # VIC_CYAN          ; colour...
@@ -306,7 +326,7 @@ draw_col_headers:
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
         tax
-        asl zp_screen_mask      ; turn off reverse-video
+        asl zp_print_mask       ; turn off reverse-video
         jsr fast_spaces         ; print spaces to the end of the screen
 
         ; add Y to the screen address to reset Y to zero on the next screen row
@@ -333,12 +353,21 @@ draw_col_header:
         stx zp_x                ; set aside column index
         sty zp_y                ; set aside current screen position
 
+        ; we want to highlight the column if the cursor /
+        ; selection is within this column
+        lda # VIC_CYAN
+        cpx zp_view.cursor.col
+        bne +
+        lda # VIC_YELLOW
++       sta zp_print_colour
+
         ; when printing, X will be the number of chars to print;
         ; to begin with, set this to the column width
-        tax
+        ldx zp_a
         
+        ; enable reverse video printing
         lda # %10000000
-        sta zp_screen_mask
+        sta zp_print_mask
 
         clc
         lda # SYS_SCREEN_COLS
@@ -351,17 +380,21 @@ draw_col_header:
         inx
 
         ; draw header background:
++       lda zp_print_colour
         ; note that X already contains column width to draw
-+       lda # VIC_CYAN
         jsr fast_spaces_colour  ; NOTE: does not modify carry!
         bcc +
         
         ; print the right-border:
         lda # $90
+.IFDEF  OPTIMIZE_SIZE
+        jsr print_char_colour
+.ELSE
         sta [zp_screen], y
-        lda # VIC_CYAN
+        lda zp_print_colour
         sta [zp_colour], y
         iny
+.ENDIF
 
         ; print the column title ("A"-"IV")
         ;-----------------------------------------------------------------------
@@ -412,7 +445,7 @@ draw_row:
 ; draws a full sheet row, including the row number:
 ; this routine is used to fill in a row after scrolling vertically
 ;
-; in:   X       row number; TODO: this to be expanded to 16-bit
+; in:   Y       offset from `zp_screen`, i.e. the screen column to print at
 ; out:  Y       Y, screen-column, is reset to 0 and `zp_screen` /
 ;               `zp_colour` are moved forward to the next screen row
 ;       X       (preserved)
@@ -420,16 +453,19 @@ draw_row:
 ;-------------------------------------------------------------------------------
         stx zp_x                ; backup X
 
+        ; we want to highlight the column if the cursor /
+        ; selection is within this column
+        ;
         ldy # 0                 ; start on the left edge of the screen
-        lda zp_drawrc.row+LO    ; TODO: expand to 16-bit
-        jsr draw_row_number
-        
-        ; set colour:
-        ldy # 0
-        ldx # 3
-        lda # VIC_CYAN
-        asl zp_screen_mask      ; disable reverse-video drawing
+        lda # VIC_CYAN          ; default colour
+        ldx zp_drawrc.row+LO    ; TODO: expand to 16-bit
+        cpx zp_view.cursor.row+LO
+        bne +
+        lda # VIC_YELLOW        ; switch to highlight colour
++       ldx # 3
         jsr fast_colour
+        ldy # 0
+        jsr draw_row_number
 
         ; reset the column number to where the view
         ; is currently scrolled horizontally
@@ -438,6 +474,7 @@ draw_row:
         
         ; keep drawing cells until we reach the edge of the screen:
         ;
+        asl zp_print_mask       ; disable reverse-video drawing
 -       lda # 2                 ; cell width
         jsr draw_empty_cell     ; draw an empty cell
         cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
@@ -460,7 +497,7 @@ draw_row:
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
         tax
-        asl zp_screen_mask      ; turn off reverse-video
+        asl zp_print_mask       ; turn off reverse-video
         jsr fast_spaces         ; print spaces to the end of the screen
 
 +       ldx zp_x                ; restore row number
@@ -474,7 +511,7 @@ draw_row_number:
 ;===============================================================================
         ; enable reverse video for column number
         lda # %10000000
-        sta zp_screen_mask
+        sta zp_print_mask
         
         lda zp_drawrc.row+LO
         jmp print_number_byte
@@ -562,7 +599,7 @@ fast_spaces:                                                            ;+6=6
         sta.w @jmp+1            ; change jump address to match          ;+4=14
         
         lda # ' '               ; use a space character                 ;+2=16
-        ora zp_screen_mask      ; apply reverse-video, if set (bit 7)   ;+3=19
+        ora zp_print_mask       ; apply reverse-video, if set (bit 7)   ;+3=19
 @jmp    jmp spaces_chars                                                ;+3=22
 
 
@@ -818,188 +855,5 @@ colour_table:
         .BYTE   <colour_chars@chr35,    <colour_chars@chr36
         .BYTE   <colour_chars@chr37,    <colour_chars@chr38
         .BYTE   <colour_chars@chr39,    <colour_chars@chr40
-;###############################################################################
-.ENDS
-
-
-scroll_view_down:
-;===============================================================================
-        ldx zp_view.h           ; number of rows to scroll
-        dex                     ; less one because a new row will be drawn in
-
-scroll_down:
-;===============================================================================
-; copy a series of rows upwards, effectively scrolling the sheet down:
-;
-; (this is currently hard-coded whilst I work out the details)
-;-------------------------------------------------------------------------------
-        ; we could copy 40 columns each loop but bumping the source and
-        ; destination addresses forward is expensive so instead we do as many
-        ; rows as will fit within an 8-bit index (i.e. 6, for 40 columns)
-        ;
-        lda.w copy_rows_remainder-1, x
-        sta.w @rem+1
-        ; given the number of rows to copy, lookup in a table the number of
-        ; complete iterations required (6 rows per iteration for 40 columns)
-        lda.w copy_rows_iterations-1, x
-        ; if this is zero, then there is less than one full iteration
-        ; of chars to copy (e.g. <6 rows for 40 columns)
-        beq @rem
-        ; write this count into the loop
-        sta.w @ldx+1
-        
-        ; set the source and destination addresses
-        ; to the 2nd row of the view
-        ldx zp_view.y
-        inx
-        jsr set_addr_copy
-        ; now set the source address to the first row
-        dex
-        jsr set_addr
-
-@ldx    ldx # 1
-        ;-----------------------------------------------------------------------
-@copy:  ldy # 0
--       lda [zp_screen_copy], y
-        sta [zp_screen], y
-        lda [zp_colour_copy], y
-        sta [zp_colour], y
-        ; TODO: can we do this in reverse instead?
-        iny
-        cpy # floor(256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
-        bcc -
-
-        ; bump the source and destination addresses
-        ; forward as Y has reached its limit
-        jsr bump_addr_copy
-
-        dex
-        bne @copy
-
-        ; copy remainder
-        ;-----------------------------------------------------------------------
-@rem:   ldx # 0
-        beq @rts
-
--       lda [zp_screen_copy], y
-        sta [zp_screen], y
-        lda [zp_colour_copy], y
-        sta [zp_colour], y
-        iny
-        dex
-        bne -
-
-        jmp bump_addr_copy
-
-@rts:   rts
-
-
-scroll_view_up:
-;===============================================================================
-        ; we need to start with copying the 2nd-to-last row down to the
-        ; last row and then walk up the screen, copying rows down by one
-        clc
-        lda.b zp_view.y
-        adc.b zp_view.h
-        tax
-        dex
-        dex
-        jsr set_addr_copy
-        ; now set the source address to the previous row
-        inx
-        jsr set_addr
-
-        ldx zp_view.h
-        dex
-        ;-----------------------------------------------------------------------
-@copy:  ldy # SYS_SCREEN_COLS-1
--       lda [zp_screen_copy], y
-        sta [zp_screen], y
-        lda [zp_colour_copy], y
-        sta [zp_colour], y
-        dey
-        bpl -
-
-@next:  sec
-        lda.b zp_screen+LO
-        sbc # SYS_SCREEN_COLS
-        bcs +
-        dec.b zp_screen+HI
-        dec.b zp_colour+HI
-        sec                     ; set carry only when needed to save 2 cycles
-+       sta.b zp_screen+LO
-        sta.b zp_colour+LO
-
-        lda.b zp_screen_copy+LO
-        sbc # SYS_SCREEN_COLS
-        bcs +
-        dec.b zp_screen_copy+HI
-        dec.b zp_colour_copy+HI
-+       sta.b zp_screen_copy+LO
-        sta.b zp_colour_copy+LO
-
-        dex
-        bne @copy
-
-        rts
-
-
-;;        ldy # 0
-;;@copy:
-;;@srcscr lda zs_screen, y
-;;@dstscr sta zs_screen, y
-;;@srcclr lda $d800, y
-;;@dstclr sta $d800, y
-;;        iny
-;;        cpy #< (256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
-;;        bcc @copy
-;;
-;;        clc
-;;        tya
-;;        adc @srcscr+1
-;;        bcc +
-;;        inc @srcscr+2
-;;        inc @srcclr+2
-;;+       sta @srcscr+1
-;;        sta @srcclr+1
-;;        clc
-;;        tya
-;;        adc @dstscr+1
-;;        bcc +
-;;        inc @dstscr+2
-;;        inc @dstclr+2
-;;+       sta @dstscr+1
-;;        sta @dstclr+1
-
-
-.SECTION "COPYROWS_TABLE" BITWINDOW 8
-;###############################################################################
-.DEF    _ROWS_PER_ITER  floor( 256 / SYS_SCREEN_COLS )
-
-;;copy_rows_index:
-;;        ;-----------------------------------------------------------------------
-;;        ; a small table of multiples of screen widths that fit within 1 byte
-;;        ; e.g. with a 40-column screen: 40, 80, 120, 160, 200, 240; meaning
-;;        ; that up to 6 screen rows can be traversed within a one byte index
-;;        ;
-;;.REPEAT _ROWS_PER_ITER INDEX I
-;;        .BYTE I * SYS_SCREEN_COLS
-;;.ENDR
-
-copy_rows_iterations:
-        ;-----------------------------------------------------------------------
-        ; for a given number of rows, how many times a full-byte's worth of
-        ; rows should be processed. the remainder is given in the next table
-        ;
-.REPEAT SYS_SCREEN_ROWS INDEX R
-        .BYTE R / _ROWS_PER_ITER
-.ENDR
-
-copy_rows_remainder:
-        ;-----------------------------------------------------------------------
-.REPEAT SYS_SCREEN_ROWS INDEX R
-        .BYTE (R+1) * SYS_SCREEN_COLS # _ROWS_PER_ITER * SYS_SCREEN_COLS
-.ENDR
-
 ;###############################################################################
 .ENDS

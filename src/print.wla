@@ -16,6 +16,40 @@
 .ENDS
 
 
+print_char:
+;===============================================================================
+; print a character to the current screen position:
+;
+; in:   A       screen-code to print, where `zp_screen` is
+;               the address of the current screen row
+;       Y       offset from `zp_screen`, i.e. screen X-position
+;
+; out:  Y       Y is incremented by 1
+;       A, X    (preserved)                                             ;+6=6
+;-------------------------------------------------------------------------------
+        ora zp_print_mask                                               ;+3=9
+        sta [zp_screen], y                                              ;+6=15
+        iny                                                             ;+2=17
+        rts                                                             ;+6=23
+
+print_char_colour:
+;===============================================================================
+; print a character to the current screen position and set its colour:
+;
+; in:   A       screen-code to print, where `zp_screen` is the address of the
+;               current screen row. colour will be taken from `zp_print_colour`
+;       Y       offset from `zp_screen`, i.e. screen X-position
+;
+; out:  Y       Y is incremented by 1
+;       A, X    (preserved)                                             ;+6=6
+;-------------------------------------------------------------------------------
+        sta [zp_screen], y                                              ;+6=12
+        lda zp_print_colour                                             ;+3=15
+        sta [zp_colour], y                                              ;+6=21
+        iny                                                             ;+2=23
+        rts                                                             ;+6=29
+
+
 print_number_word:
 ;===============================================================================
 ; print a 16-bit binary number as decimal:
@@ -62,7 +96,7 @@ print_number_word:
         bne @div10              ; } until value is 0
         
         pla
--       ora zp_screen_mask      ; apply reverse-video, if enabled
+-       ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_screen], y
         iny
         pla
@@ -84,8 +118,11 @@ print_number_byte:
 ;       Y       offset from `zp_screen` to print at
 ; out:  Y       the screen offset is moved forward
 ;               by the number of printed chars
-;       A, X    (clobbered)
+;       X       (preserved)
+;       A       (clobbered)
 ;-------------------------------------------------------------------------------
+        stx.w @ldx+1            ; preserve X
+
         ; hundreds:
         ;-----------------------------------------------------------------------
         sec
@@ -103,7 +140,7 @@ print_number_byte:
         cmp # '1'               ; is it a zero?
         bcs +
         lda # ' '               ; no hundreds digit: use a space instead
-+       ora zp_screen_mask      ; apply reverse-video mode, if enabled
++       ora zp_print_mask       ; apply reverse-video mode, if enabled
         sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
@@ -127,17 +164,18 @@ print_number_byte:
         cmp # '0'               ; is the digit a zero?
         bne +                   ; if not, no padding needed,
         lda # ' '               ; otherwise use padding instead
-+       ora zp_screen_mask      ; apply reverse-video, if enabled
++       ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
         ; ones:
         ;-----------------------------------------------------------------------
         pla                     ; retrieve the 1s-digit
-        ora zp_screen_mask      ; apply reverse-video, if enabled
+        ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
+@ldx    ldx # $00               ; restore X
         rts
 
 @flag:  .BYTE %00000000

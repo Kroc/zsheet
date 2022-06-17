@@ -56,6 +56,7 @@ init:
 .INC    "print.wla"             ; screen output
 
 .INC    "rc.wla"                ; Row-Column structure handling
+.INC    "view.wla"              ; viewport handling
 .INC    "draw.wla"              ; drawing to the screen
 
 
@@ -76,13 +77,14 @@ zsheet_init:
 
         ; make sure the bitmask for printing is clear!
         ; (this is used to do reverse-video printing)
-        sta zp_screen_mask
+        sta zp_print_mask
 
         lda # 0
         sta zp_view.col
         sta zp_view.row+LO
         sta zp_view.row+HI
 
+        ; set starting position of the cell cursor
         sta zp_view.cursor.col
         sta zp_view.cursor.row+LO
         sta zp_view.cursor.row+HI
@@ -146,7 +148,7 @@ input:
 
         ; do the hard scroll, copying the screen rows up to make room
         ; at the bottom of the screen. this routine intentionally leaves
-        ; `zp_print` on the last row, ready to be filled in
+        ; `zp_screen` on the last row, ready to be filled in
         jsr scroll_view_down
         
         clc

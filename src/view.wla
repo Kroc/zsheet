@@ -1,0 +1,201 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+; a view is the size/position of a window into the current sheet
+;
+.STRUCT View
+        col             BYTE    ; top-left column in view (scroll-offset)
+        row             WORD    ; top-left row in view (scroll-offset)
+        y               BYTE    ; screen-row the view begins at
+        h               BYTE    ; number of screen-rows visible in the view
+        ; TODO: to support selection ranges, and even disparate selections;
+        ; (e.g. "A3,C6,B9") this will have to be a lot more complex
+        cursor          INSTANCEOF Rc
+.ENDST
+
+.RAMSECTION "ZP_VIEWS"  SLOT "ZP" RETURNORG
+        zp_view         INSTANCEOF View
+.ENDS
+
+
+scroll_view_down:
+;===============================================================================
+        ldx zp_view.h           ; number of rows to scroll
+        dex                     ; less one because a new row will be drawn in
+
+scroll_down:
+;===============================================================================
+; copy a series of rows upwards, effectively scrolling the sheet down:
+;
+; (this is currently hard-coded whilst I work out the details)
+;-------------------------------------------------------------------------------
+        ; we could copy 40 columns each loop but bumping the source and
+        ; destination addresses forward is expensive so instead we do as many
+        ; rows as will fit within an 8-bit index (i.e. 6, for 40 columns)
+        ;
+        lda.w copy_rows_remainder-1, x
+        sta.w @rem+1
+        ; given the number of rows to copy, lookup in a table the number of
+        ; complete iterations required (6 rows per iteration for 40 columns)
+        lda.w copy_rows_iterations-1, x
+        ; if this is zero, then there is less than one full iteration
+        ; of chars to copy (e.g. <6 rows for 40 columns)
+        beq @rem
+        ; write this count into the loop
+        sta.w @ldx+1
+        
+        ; set the source and destination addresses
+        ; to the 2nd row of the view
+        ldx zp_view.y
+        inx
+        jsr set_addr_copy
+        ; now set the source address to the first row
+        dex
+        jsr set_addr
+
+@ldx    ldx # 1
+        ;-----------------------------------------------------------------------
+@copy:  ldy # 0
+-       lda [zp_screen_copy], y
+        sta [zp_screen], y
+        lda [zp_colour_copy], y
+        sta [zp_colour], y
+        iny
+        cpy # floor(256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
+        bcc -
+
+        ; bump the source and destination addresses
+        ; forward as Y has reached its limit
+        jsr bump_addr_copy
+
+        dex
+        bne @copy
+
+        ; copy remainder
+        ;-----------------------------------------------------------------------
+@rem:   ldx # 0
+        beq @rts
+
+-       lda [zp_screen_copy], y
+        sta [zp_screen], y
+        lda [zp_colour_copy], y
+        sta [zp_colour], y
+        iny
+        dex
+        bne -
+
+        jmp bump_addr_copy
+
+@rts:   rts
+
+
+scroll_view_up:
+;===============================================================================
+        ; we need to start with copying the 2nd-to-last row down to the
+        ; last row and then walk up the screen, copying rows down by one
+        clc
+        lda.b zp_view.y
+        adc.b zp_view.h
+        tax
+        dex
+        dex
+        jsr set_addr_copy
+        ; now set the source address to the previous row
+        inx
+        jsr set_addr
+
+        ldx zp_view.h
+        dex
+        ;-----------------------------------------------------------------------
+@copy:  ldy # SYS_SCREEN_COLS-1
+-       lda [zp_screen_copy], y
+        sta [zp_screen], y
+        lda [zp_colour_copy], y
+        sta [zp_colour], y
+        dey
+        bpl -
+
+@next:  sec
+        lda.b zp_screen+LO
+        sbc # SYS_SCREEN_COLS
+        bcs +
+        dec.b zp_screen+HI
+        dec.b zp_colour+HI
+        sec                     ; set carry only when needed to save 2 cycles
++       sta.b zp_screen+LO
+        sta.b zp_colour+LO
+
+        lda.b zp_screen_copy+LO
+        sbc # SYS_SCREEN_COLS
+        bcs +
+        dec.b zp_screen_copy+HI
+        dec.b zp_colour_copy+HI
++       sta.b zp_screen_copy+LO
+        sta.b zp_colour_copy+LO
+
+        dex
+        bne @copy
+
+        rts
+
+
+;;        ldy # 0
+;;@copy:
+;;@srcscr lda zs_screen, y
+;;@dstscr sta zs_screen, y
+;;@srcclr lda $d800, y
+;;@dstclr sta $d800, y
+;;        iny
+;;        cpy #< (256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
+;;        bcc @copy
+;;
+;;        clc
+;;        tya
+;;        adc @srcscr+1
+;;        bcc +
+;;        inc @srcscr+2
+;;        inc @srcclr+2
+;;+       sta @srcscr+1
+;;        sta @srcclr+1
+;;        clc
+;;        tya
+;;        adc @dstscr+1
+;;        bcc +
+;;        inc @dstscr+2
+;;        inc @dstclr+2
+;;+       sta @dstscr+1
+;;        sta @dstclr+1
+
+
+.SECTION "COPYROWS_TABLE" BITWINDOW 8
+;###############################################################################
+.DEF    _ROWS_PER_ITER  floor( 256 / SYS_SCREEN_COLS )
+
+;;copy_rows_index:
+;;        ;-----------------------------------------------------------------------
+;;        ; a small table of multiples of screen widths that fit within 1 byte
+;;        ; e.g. with a 40-column screen: 40, 80, 120, 160, 200, 240; meaning
+;;        ; that up to 6 screen rows can be traversed within a one byte index
+;;        ;
+;;.REPEAT _ROWS_PER_ITER INDEX I
+;;        .BYTE I * SYS_SCREEN_COLS
+;;.ENDR
+
+copy_rows_iterations:
+        ;-----------------------------------------------------------------------
+        ; for a given number of rows, how many times a full-byte's worth of
+        ; rows should be processed. the remainder is given in the next table
+        ;
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE R / _ROWS_PER_ITER
+.ENDR
+
+copy_rows_remainder:
+        ;-----------------------------------------------------------------------
+.REPEAT SYS_SCREEN_ROWS INDEX R
+        .BYTE (R+1) * SYS_SCREEN_COLS # _ROWS_PER_ITER * SYS_SCREEN_COLS
+.ENDR
+
+;###############################################################################
+.ENDS
