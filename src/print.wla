@@ -43,11 +43,12 @@ print_char_colour:
 ; out:  Y       Y is incremented by 1
 ;       A, X    (preserved)                                             ;+6=6
 ;-------------------------------------------------------------------------------
-        sta [zp_screen], y                                              ;+6=12
-        lda zp_print_colour                                             ;+3=15
-        sta [zp_colour], y                                              ;+6=21
-        iny                                                             ;+2=23
-        rts                                                             ;+6=29
+        ora zp_print_mask                                               ;+3=9
+        sta [zp_screen], y                                              ;+6=15
+        lda zp_print_colour                                             ;+3=18
+        sta [zp_colour], y                                              ;+6=24
+        iny                                                             ;+2=26
+        rts                                                             ;+6=32
 
 
 print_number_word:

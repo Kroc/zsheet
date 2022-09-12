@@ -21,9 +21,12 @@
 ;  +--+-+--------------------------------------------+----+----+--------+
 ;     $0800 < font                                        $D000
 ;
-;  C1 = code, drawing
-;  C2 = code, cannot use I/O
-;  C3 = code, cannot use KERNAL
+; $0400 screen
+; $0800 custom font
+; $1000 start of sheet data
+; $C000 C1: code
+; $D000 C2: code, cannot use I/O
+; $E000 C3: code, cannot use KERNAL
 ;
 .DEF    zs_screen       $0400   ; screen-RAM
 .DEF    zs_font         $0800   ; custom font
@@ -34,7 +37,7 @@
 ; this is the same ZP byte used by the KERNAL
 ; to store the last-used device number
 ;
-.DEF    zs_device       ZP_KERNAL_DEV                               ;=$BA
+.DEF    zs_device       ZP_KERNAL_DEV                                   ;=$BA
 
 ; when printing, we can easily flip between printing to the screen
 ; and setting colour RAM by incrementing the hi-byte of `zp_screen`
@@ -101,11 +104,11 @@ zsheet_init:
         ; set the position/size
         ; of the default view:
         ;
-        lda # 2                 ; sheet starts on the second screen row
+        lda # 1                 ; sheet starts on the second screen row
         sta zp_view.y
         ; number of screen-rows in the view:
-        ; height of the screen sans two for the table tabs,
-        ; row columns and another two for the status & formula bar
+        ; height of the screen sans 1 for the table tabs
+        ; and another 2 for the status & formula bar
         lda # SYS_SCREEN_ROWS - 2 - 2
         sta zp_view.h
 
@@ -131,51 +134,13 @@ input:
         ;-----------------------------------------------------------------------
         bne @up
 
-        ; when scrolling down we need to stop scrolling when the last row
-        ; hits the *bottom* of the view, accounting for the view height
-        ;
-        ; since the bottom of the sheet is row 255 (0-based), subtract the
-        ; height of the view to work out the row number at the top of the
-        ; view that causes row 255 to appear at the bottom of the view
-        ;
-        sec                     ; clear borrow for subtraction
-        lda # $ff               ; prepare for 255-H
-        sbc zp_view.h           ; subtract the view height
-        sta.w @dnrow+1          ; write this into our compare
-        inc.w @dnrow+1          ; compensate to make $100-H
-
-        lda zp_view.row+LO
-@dnrow  cmp # $ff
-        bcs @rts
-
-        ; do the hard scroll, copying the screen rows up to make room
-        ; at the bottom of the screen. this routine intentionally leaves
-        ; `zp_screen` on the last row, ready to be filled in
-        jsr scroll_view_down
-        
-        clc
-        lda zp_view.row+LO
-        inc zp_view.row+LO
-        adc zp_view.h
-        sta zp_drawrc.row+LO
-        jmp draw_row
-        rts
+        jmp cursor_down
 
 @up:    cmp # PET_CRSR_UP
         ;-----------------------------------------------------------------------
         bne @right
 
-        ; if at row zero, cannot scroll up!
-        lda zp_view.row+LO
-        beq @rts
-
-        dec zp_view.row+LO
-        ;;ldx zp_view.h           ; number of rows to copy upwards
-        jsr scroll_view_up
-        
-        lda zp_view.row+LO
-        sta zp_drawrc.row+LO
-        jmp draw_row
+        jmp cursor_up
 
 @right: cmp # PET_CRSR_RT
         ;-----------------------------------------------------------------------

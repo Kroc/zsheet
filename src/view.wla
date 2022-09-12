@@ -24,16 +24,195 @@
 .ENDS
 
 
+row_to_screen:
+;===============================================================================
+; for a given sheet-row, returns the screen-row it appears on, if visible:
+;
+; in:   A       sheet-row
+; out:  carry   clear if row is on-screen, set if not visible
+;       A       screen-row the sheet-row can be found on
+;-------------------------------------------------------------------------------
+        jsr row_to_view
+        bcs @rts
+
+        adc zp_view.y
+
+@rts:   rts
+
+
+row_to_view:
+;===============================================================================
+; given a sheet-row, returns which row of the view it appears on, if visible:
+;
+; in:   A       sheet-row
+; out:  carry   clear if row is on-screen, set if not visible
+;       A       view-row the sheet-row can be found on
+;-------------------------------------------------------------------------------
+        ; first, is the sheet-row within the view's scroll-offset?
+        sec
+        sbc zp_view.row
+        bcc @rts                ; if row is above view, exit with carry set
+        cmp zp_view.h           ; is row below view?
+        bcs @rts
+
+        adc # 1                 ; compensate for the column-headers!
+
+@rts:   rts
+
+
+col_to_screen:
+;===============================================================================
+; for a given sheet-col, returns the screen-col it appears on, if visible:
+;
+; in:   A       sheet-col
+; out:  carry   clear if column is on-screen, set if not visible
+;       A       screen-col the sheet-col can be found on
+;-------------------------------------------------------------------------------
+        ; first, is the sheet-col within the view's scroll-offset?
+        ;
+        sec
+        sbc zp_view.col
+        bcc @rts                ; if col is before view, exit with carry set
+
+        cmp SYS_SCREEN_COLS - 3
+        bcs @rts
+
+        adc # 3
+
+@rts:   rts
+
+
+cursor_up:
+;===============================================================================
+; move the cursor up a row:
+;
+;-------------------------------------------------------------------------------
+        lda zp_view.cursor.row  ; are we at the top-most row (0)?
+        beq @rts                ; can't go up!
+
+        tax                     ; move cursor up a row,
+        dex                     ;  but keep the previous value in A
+        stx zp_view.cursor.row
+
+        jsr @draw               ; redraw previous row to clear cursor highlight
+
+        ; do we need to scroll the view?
+        ;-----------------------------------------------------------------------
+        ; we only want to scroll at the edges of the view rather than all the
+        ; time so we wait until the 2nd row in the view so that one row is
+        ; always visible above the cursor (instead of cursoring "blind")
+        ;
+        lda zp_view.cursor.row  ; if cursor is at row 0,
+        beq @draw               ; no scrolling up can occur anyway
+
+        ldx zp_view.row         ; do an off-by-one comparison on purpose
+        cpx zp_view.cursor.row  ;  to aim for the 2nd sheet-row of the view
+        bcc @draw
+        
+        dec zp_view.row         ; move view up a row
+        jsr scroll_view_up      ;  and do the hard scroll
+        
+        lda zp_view.row         ; fill in the new row
+        sta zp_drawrc.row       ; TODO: this should be part of `scroll_view_up`
+        jsr draw_row
+
+        lda zp_view.cursor.row  ; redraw new row to add cursor highlight
+
+        ;-----------------------------------------------------------------------
+@draw:  sta zp_drawrc.row       ; set the sheet-row to draw
+        jsr row_to_screen       ; from the sheet-row, get an on-screen row
+        bcs @rts                ; if outside view, don't draw anything
+
+        tax                     ; screen-row to draw on
+        jsr set_scr_addr        ; set the screen drawing address
+        jmp draw_row            ; draw the row's contents!
+
+@rts:   rts
+
+
+cursor_down:
+;===============================================================================
+; move the cursor down one row:
+;-------------------------------------------------------------------------------
+        ldx zp_view.cursor.row  ; are we at the bottom most row in the sheet?
+        txa                     ; (keep previous row number)
+        inx                     ; move to next row
+        beq @rts                ; if overflow 255->0, can't move down
+
+        stx zp_view.cursor.row  ; update row, but keep previous value in A
+
+        jsr @draw               ; redraw previous row to clear cursor highlight
+
+        ; do we need to scroll the view?
+        ;-----------------------------------------------------------------------
+        ; we only want to scroll at the edges of the view rather than all the
+        ; time so we wait until the 2nd-to-last row in the view so that one row
+        ; is always visible below the cursor (instead of cursoring "blind")
+        ;
+        lda zp_view.cursor.row  ; current absolute cursor row
+        jsr row_to_view         ; get relative row number within the view
+        adc # 1                 ; add 1 to compensate for the 2nd-to-last row
+        sbc zp_view.h           ; are we at the bottom of the view?
+        bcc @next               ; if no, don't scroll
+
+        ; when scrolling down we need to stop scrolling when the last row
+        ; hits the *bottom* of the view, accounting for the view height
+        ;
+        ; since the bottom of the sheet is row 255 (0-based), subtract the
+        ; height of the view to work out the row number at the top of the
+        ; view that causes row 255 to appear at the bottom of the view
+        ;
+        sec                     ; clear borrow for subtraction
+        lda # $00               ; prepare for 256-H
+        sbc zp_view.h           ; subtract the view height
+        sta.w @@dnrow+1         ; write this into our compare
+
+        lda zp_view.row
+@@dnrow cmp # $ff
+        bcs @next
+
+        ; do the hard scroll, copying the screen rows up to make room
+        ; at the bottom of the screen. this routine intentionally leaves
+        ; `zp_screen` on the last row, ready to be filled in
+        jsr scroll_view_down
+        
+        clc
+        lda zp_view.row
+        inc zp_view.row
+        adc zp_view.h
+        sta zp_drawrc.row
+        jsr draw_row
+
+        ;-----------------------------------------------------------------------
+@next:  lda zp_view.cursor.row  ; redraw the new row to add cursor highlight
+        
+        ;-----------------------------------------------------------------------
+@draw:  sta zp_drawrc.row       ; set the sheet-row to draw
+        jsr row_to_screen       ; from the sheet-row, get an on-screen row
+        bcs @rts                ; if outside view, don't draw anything
+
+        tax                     ; screen-row to draw on
+        jsr set_scr_addr        ; set the screen drawing address
+        jmp draw_row            ; draw the row's contents!
+
+@rts:   rts
+
+
 scroll_view_down:
 ;===============================================================================
         ldx zp_view.h           ; number of rows to scroll
         dex                     ; less one because a new row will be drawn in
+
+        ; fallthrough
+        ; ...
 
 scroll_down:
 ;===============================================================================
 ; copy a series of rows upwards, effectively scrolling the sheet down:
 ;
 ; (this is currently hard-coded whilst I work out the details)
+;
+; in:   X       number of rows to scroll
 ;-------------------------------------------------------------------------------
         ; we could copy 40 columns each loop but bumping the source and
         ; destination addresses forward is expensive so instead we do as many
@@ -54,10 +233,11 @@ scroll_down:
         ; to the 2nd row of the view
         ldx zp_view.y
         inx
-        jsr set_addr_copy
+        inx
+        jsr set_scr_addr_copy
         ; now set the source address to the first row
         dex
-        jsr set_addr
+        jsr set_scr_addr
 
 @ldx    ldx # 1
         ;-----------------------------------------------------------------------
@@ -67,7 +247,7 @@ scroll_down:
         lda [zp_colour_copy], y
         sta [zp_colour], y
         iny
-        cpy # floor(256 / SYS_SCREEN_COLS) * SYS_SCREEN_COLS
+        cpy # floor( 256 / SYS_SCREEN_COLS ) * SYS_SCREEN_COLS
         bcc -
 
         ; bump the source and destination addresses
@@ -99,16 +279,16 @@ scroll_view_up:
 ;===============================================================================
         ; we need to start with copying the 2nd-to-last row down to the
         ; last row and then walk up the screen, copying rows down by one
-        clc
+        ;
+        sec                     ; (+1 for column headers!)
         lda.b zp_view.y
         adc.b zp_view.h
         tax
         dex
         dex
-        jsr set_addr_copy
-        ; now set the source address to the previous row
-        inx
-        jsr set_addr
+        jsr set_scr_addr_copy
+        inx                     ; set the source address to the previous row
+        jsr set_scr_addr
 
         ldx zp_view.h
         dex
@@ -121,6 +301,8 @@ scroll_view_up:
         dey
         bpl -
 
+        ; TODO: we should just use the screen-addr lookup table for this
+        ;
 @next:  sec
         lda.b zp_screen+LO
         sbc # SYS_SCREEN_COLS
