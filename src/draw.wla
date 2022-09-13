@@ -28,15 +28,6 @@
         zp_row_sel      BYTE
 .ENDS
 
-.RAMSECTION "ZS_WORK"   SLOT "LORAM" RETURNORG
-        ; a list of the column widths currently on screen:
-        ; the maxmimum number of columns that can fit on screen is based
-        ; upon the minimum allowed column-wdith, +1 because the 'column
-        ; width' doesn't include the borders that are automatically
-        ; inserted between rows
-        column_pos      DS (SYS_SCREEN_COLS / (ZS_COL_WIDTH_MIN+1)) + 1
-.ENDS
-
 
 ; tables for looking up the screen / colour-RAM
 ; addresses for each screen row:
@@ -262,18 +253,9 @@ draw_formula_bar:
 
 draw_view:
 ;===============================================================================
-; does a complete draw of the spreadsheet view
+; does a complete draw of the spreadsheet view:
 ;
 ;-------------------------------------------------------------------------------
-        ; copy the current view row/column into
-        ; the row/col reference used during drawing
-        lda zp_view.col
-        sta zp_drawrc.col
-        lda zp_view.row+LO
-        sta zp_drawrc.row+LO
-        lda zp_view.row+HI
-        sta zp_drawrc.row+HI
-
         jsr draw_col_headers
         jmp draw_rows
 
@@ -287,9 +269,6 @@ draw_col_headers:
         jsr set_scr_addr        ; the view, where the column-headers reside
 
         ; left-hand offset:
-        ;
-        ; TODO: this needs to be based upon the number
-        ; of characters in the view's first row!
         ;
         ; fill in the corner bit of the sheet:
         ;
@@ -390,7 +369,7 @@ draw_col_header:
         bcc +
         
         ; print the right-border:
-        lda # $90
+        lda # $91
 .IFDEF  OPTIMIZE_SIZE
         jsr print_char_colour
 .ELSE
@@ -540,6 +519,15 @@ draw_row_number:
         jmp print_number_byte
 
 
+draw_column:
+;===============================================================================
+; draw an entire column:
+;
+; draws only the content of one column, i.e. for side-scrolling
+;-------------------------------------------------------------------------------
+        rts
+
+
 draw_cell:
 ;===============================================================================
 ; draws the contents of the cell referenced by `zp_drawrc`:
@@ -581,10 +569,19 @@ draw_cell:
         sta zp_print_colour
 
         jsr fast_spaces_colour  ; NOTE: does not modify carry!
-        bcc +
+        bcc ++
         
         ; print the right-border:
-        lda # $11
+        ;
+        ; TODO: use a solid block for the border on cursor cells,
+        ;       except where multiple columns are selected
+        ;
+        lda zp_print_mask
+        asl
+        lda # $10
+        bcc +
+        adc # $0f
++
 .IFDEF  OPTIMIZE_SIZE
         jsr print_char_colour
 .ELSE
@@ -597,7 +594,7 @@ draw_cell:
 
         ; the print position is now at the end of the cell, preserve
         ; this so that further printing continues after the cell
-+       sty.w @ldy+1
+++      sty.w @ldy+1
 
         ; print cell contents:
         ;-----------------------------------------------------------------------
@@ -607,7 +604,6 @@ draw_cell:
         ;       to the screen to be able to clip properly. it'll be too
         ;       difficult to test between each character printer, 
         ;       particularly with things like centred-text
-        
-
+        ;
 @ldy:   ldy # $88               ; return next screen-position
         rts

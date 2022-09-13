@@ -31,6 +31,7 @@
 .DEF    zs_screen       $0400   ; screen-RAM
 .DEF    zs_font         $0800   ; custom font
 .DEF    zs_data         $1000   ; user-space starting address
+.DEF    zs_cols         $1000   ; 256-bytes, width of each column
 .DEF    zs_code         $c000   ; main code
 
 ; active device number (system-dependent);
@@ -82,18 +83,6 @@ zsheet_init:
         ; (this is used to do reverse-video printing)
         sta zp_print_mask
 
-        lda # 0
-        sta zp_view.col
-        sta zp_view.row+LO
-        sta zp_view.row+HI
-
-        ; set starting position of the cell cursor
-        sta zp_view.cursor.col
-        sta zp_view.cursor.row+LO
-        sta zp_view.cursor.row+HI
-        sta zp_col_sel
-        sta zp_row_sel
-
         ; clear the "work RAM", temporary variables
         ; used that are not part of the sheet data
         ldx #< (SECTIONEND_ZS_WORK - SECTIONSTART_ZS_WORK)
@@ -101,27 +90,41 @@ zsheet_init:
         sta.w SECTIONSTART_ZS_WORK, x
         bne -
 
-        ; set the position/size
-        ; of the default view:
-        ;
-        lda # 1                 ; sheet starts on the second screen row
-        sta zp_view.y
-        ; number of screen-rows in the view:
-        ; height of the screen sans 1 for the table tabs
-        ; and another 2 for the status & formula bar
-        lda # SYS_SCREEN_ROWS - 2 - 2
-        sta zp_view.h
+        jsr init_sheet          ; initialise a blank sheet
+        jsr init_view           ; initialise default view
 
         ; with everything configured, do a full screen redraw:
         ; we don't need to erase the screen beforehand as this routine
         ; will overwrite every cell on the screen in due course
         jsr draw_screen
 
+        ; fallthrough
+        ; ...
 
 main:
 ;===============================================================================
 -       jsr input
         jmp -
+
+
+init_sheet:
+;===============================================================================
+; intialise a default, blank sheet:
+;-------------------------------------------------------------------------------
+        ; populate the column width for all columns:
+        ;
+        ; TODO: using 256 bytes for column widths is very wasteful, but is the
+        ;       fastest option for calculating side scrolling where we need to
+        ;       add up column widths. even if we define only the widths of
+        ;       columns used, how do we expand (or shrink) this range?
+        ;
+        ldx # 0                 ; counter, 256 (underflows first)
+        lda # ZS_COL_WIDTH_MIN
+-       sta zs_cols, x
+        dex
+        bne -
+
+        rts
 
 
 input:
@@ -146,6 +149,8 @@ input:
         ;-----------------------------------------------------------------------
         bne @left
         
+        jmp cursor_right
+
         ldx zp_view.col
         inx
         beq @rts
