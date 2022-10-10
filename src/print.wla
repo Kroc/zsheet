@@ -32,6 +32,7 @@ print_char:
         iny                                                             ;+2=17
         rts                                                             ;+6=23
 
+
 print_char_colour:
 ;===============================================================================
 ; print a character to the current screen position and set its colour:

@@ -1,0 +1,214 @@
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+; sheet memory layout:
+;
+; cells:
+;-------------------------------------------------------------------------------
+; each cell in the sheet is 8-bytes:
+;
+;       word    data type and flags
+;       long    cell numerical value, either literal or cached from formula
+;       word    formula or string address
+;
+; cell-block:
+;-------------------------------------------------------------------------------
+; cells are stored in cell-blocks; each cell-block is
+; a 256-byte page of memory that holds 32 cells
+;
+; block-map:
+;-------------------------------------------------------------------------------
+; cell-blocks (batches of 32 cells) are allocated in a block-map.
+; each block-map is a 16x16 grid of cell-blocks, i.e. 16 columns, where up to 16
+; cell-blocks can be allocated per column. therefore one block map can allocate
+; up to 16x512 cells
+;
+; for most sheets one block-map should be sufficient but since a sheet
+; contains up to 256 columns and 8'192 rows, more than one block-map
+; may be needed, memory permitting
+;
+; sheet-map:
+;-------------------------------------------------------------------------------
+; the sheet-map is a 16x16 grid of block-maps, representing 256 columns (16x16)
+; by 8'192 (16x512) rows
+;
+.STRUCT Cell
+        type            BYTE
+        flags           BYTE
+        value           LONG
+        addr            WORD
+.ENDST
+
+zs_allocmap     = zs_data       ; allocation map, page-allocation for 64K
+
+ZS_ALLOC_SYS    = $FF           ; page in use by system
+ZS_ALLOC_FREE   = $00           ; free memory
+ZS_ALLOC_MAP    = $01           ; allocation map (1 per 64K)
+ZS_ALLOC_COLS   = $02           ; column-widths block (1 per sheet)
+ZS_ALLOC_SHEET  = $03           ; a sheet-map block (16x16 block-maps)
+ZS_ALLOC_BLOCK  = $04           ; a block-map (16x16 cell-blocks)
+ZS_ALLOC_CELLS  = $05           ; a cell-block (32 cells)
+
+zs_cols         = zs_data+$100  ; 256-bytes, width of each column
+zs_sheetmap     = zs_data+$200  ; 16x16 allocation of block-maps 
+zs_pool         = zs_data+$300  ; freely allocatable space begins here
+
+
+init_sheet:
+;===============================================================================
+; intialise a default, blank sheet:
+;-------------------------------------------------------------------------------
+        ; completely clear the sheet memory; ~32K
+        ;-----------------------------------------------------------------------
+        ; TODO: in the future we should avoid the need to do this
+        ;       ahead of time, particularly for REU/GEORAM support!
+        ;
+        lda # <zs_data
+        sta zp_screen+LO
+        lda # >zs_data
+        sta zp_screen+HI
+
+        lda # 0
+        tay
+-       sta [zp_screen], y
+        iny
+        bne -
+
+        inc zp_screen+HI
+        ldx zp_screen+HI
+        cpx # >zs_code
+        bne -
+
+        ; populate the column width for all columns:
+        ;-----------------------------------------------------------------------
+        ldx # 0                 ; counter, 256 (underflows first)
+        lda # ZS_COL_WIDTH_MIN
+-       sta zs_cols, x
+        dex
+        bne -
+
+        ; fallthrough...
+        ;
+
+init_allocmap:
+;===============================================================================
+; initialises the allocation map:
+;-------------------------------------------------------------------------------
+        ; for internal RAM, much is used by the C64 KERNAL and ZSheet's
+        ; program code so mark all RAM as for system use and then we'll
+        ; free just the area reserved for sheet data
+        ;
+        lda # ZS_ALLOC_SYS
+        ldx # 0
+-       sta zs_allocmap, x
+        inx
+        bne -
+
+        ; all RAM marked as used, now free up the section for the sheet data
+        ;
+        txa                     ; X is zero due to loop exit condition above
+        ldx # >zs_data
+-       sta zs_allocmap, x
+        inx
+        cpx # >(zs_data+ZS_DATA_SIZE)
+        bne -
+
+        ; the page-allocation map is in a fixed place,
+        ; the first page of sheet data
+        lda # ZS_ALLOC_MAP
+        sta zs_allocmap+(>zs_allocmap)
+        ; next follows the page of column-widths, also fixed
+        lda # ZS_ALLOC_COLS
+        sta zs_allocmap+(>zs_cols)
+        ; lastly the sheet-map which addresses the entire sheet's 256x8192
+        ; range and therefore doesn't need to be dynamically allocated
+        lda # ZS_ALLOC_SHEET
+        sta zs_allocmap+(>zs_sheetmap)
+
+        ; after this point, pages need to be dynamically allocated
+        ;
+        ;;jsr alloc_blockmap
+
+        rts
+
+
+alloc_blockmap:
+;===============================================================================
+; allocates a new block-map:
+;
+; a block-map is a 256-byte (1 page) chunk of memory that represents a 16x16
+; grid with each byte being the page number of a cell-block
+;
+; this routine finds a free page of memory, creates an empty block-map and
+; returns its page number -- it does *not* add the new block-map to the
+; sheet-map where a specific col/row position in the sheet is assigned!
+;
+; out:  X       page-number of newly allocated block-map
+;-------------------------------------------------------------------------------
+        ; allocate a block-map, returning the page number allocated
+        lda # ZS_ALLOC_BLOCK
+        jsr alloc_page          ; TODO: handle out of memory
+
+        rts
+
+
+alloc_page
+;===============================================================================
+; allocates a page of memory:
+;
+; the page is automatically zeroed
+;
+; in:   A       the type of page being allocated; ZS_ALLOC_*. this is the value
+;               written into the allocation map -- $00 should never be used!
+;-------------------------------------------------------------------------------
+        ; search the allocation map for a page of free RAM
+        ;
+        jsr free_page           ; TODO: handle out of memory
+
+        lda # ZS_ALLOC_BLOCK    ; type of page to allocate: block-map
+        sta zs_allocmap, x      ; set the type of page in the map
+
+        ; fallthrough
+        ; ...
+
+zero_page:
+;===============================================================================
+; zeroes a page of RAM:
+;
+; in:   X       page-number to erase; all 256 bytes are cleared
+; out:  X       (preserved)
+;       A, Y    (clobbered)
+;-------------------------------------------------------------------------------
+        lda # 0                 ; set A to zero (value to write),
+
+fill_page:
+        ;=======================================================================
+        stx.w @loop+2           ; set the hi-byte in the loop
+        ldy # 0                 ; loop index
+@loop:  sta $8800, y            ; zero a byte
+        iny                     ; move to next byte
+        bne @loop               ; keep looping until wrap-around
+
+        rts
+
+
+free_page:
+;===============================================================================
+; return the page-number of the first free page in sheet memory:
+;
+; out:  X       free page number or $00 for memory full because page 0 is
+;               always allocated; zero-page for C64 RAM, and in REU/GEORAM
+;               banks page 0 stores the page alloction map
+;       A       (preserved)
+;       Y       (clobbered)
+;-------------------------------------------------------------------------------
+        ; TODO: for REU/GEORAM, this starting number would be 0
+        ;
+        ldx # (>zs_data)-1      ; start searching from start of sheet memory
+-       inx                     ; (pre-increment helps move the exit condition)
+        beq +                   ; overflow! (no free page found)
+        ldy zs_allocmap, x      ; is this page empty?
+        bne -                   ; if not, keep searching
+
++       rts

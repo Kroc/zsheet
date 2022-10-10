@@ -31,8 +31,10 @@
 .DEF    zs_screen       $0400   ; screen-RAM
 .DEF    zs_font         $0800   ; custom font
 .DEF    zs_data         $1000   ; user-space starting address
-.DEF    zs_cols         $1000   ; 256-bytes, width of each column
 .DEF    zs_code         $c000   ; main code
+
+; the size of the free memory region for sheet data
+.DEF    ZS_DATA_SIZE    zs_code - zs_data
 
 ; active device number (system-dependent);
 ; this is the same ZP byte used by the KERNAL
@@ -48,7 +50,7 @@
 .DEF    ZS_COLS_MAX          256
 .DEF    ZS_COL_WIDTH_MIN     2
 .DEF    ZS_COL_WIDTH_MAX     32
-.DEF    ZS_ROWS_MAX          999
+.DEF    ZS_ROWS_MAX          8192
 
 ; begin code:
 ;===============================================================================
@@ -58,6 +60,8 @@ init:
         jmp zsheet_init
 
 .INC    "print.wla"             ; screen output
+
+.INC    "sheet.wla"             ; sheet memory allocation
 
 .INC    "rc.wla"                ; Row-Column structure handling
 .INC    "view.wla"              ; viewport handling
@@ -72,23 +76,16 @@ zsheet_init:
         lda # VIC_BLUE
         sta VIC_BORDER
         sta VIC_BACKGROUND
+        
         lda # PET_CYAN
         sta zp_print_colour
+        
+        lda # %00000000         ; make sure the bitmask for printing is clear!
+        sta zp_print_mask       ; (this is used to do reverse-video printing)
 
         ; change the VIC memory layout to position the text-screen & font
         lda # ((>zs_screen & %00111100) << 2) | ((>zs_font & %00111000) >> 2)
         sta VIC_LAYOUT
-
-        ; make sure the bitmask for printing is clear!
-        ; (this is used to do reverse-video printing)
-        sta zp_print_mask
-
-        ; clear the "work RAM", temporary variables
-        ; used that are not part of the sheet data
-        ldx #< (SECTIONEND_ZS_WORK - SECTIONSTART_ZS_WORK)
--       dex
-        sta.w SECTIONSTART_ZS_WORK, x
-        bne -
 
         jsr init_sheet          ; initialise a blank sheet
         jsr init_view           ; initialise default view
@@ -105,27 +102,6 @@ main:
 ;===============================================================================
 -       jsr input
         jmp -
-
-
-init_sheet:
-;===============================================================================
-; intialise a default, blank sheet:
-;-------------------------------------------------------------------------------
-        ; populate the column width for all columns:
-        ;
-        ; TODO: using 256 bytes for column widths is very wasteful, but is the
-        ;       fastest option for calculating side scrolling where we need to
-        ;       add up column widths. even if we define only the widths of
-        ;       columns used, how do we expand (or shrink) this range?
-        ;
-        ldx # 0                 ; counter, 256 (underflows first)
-        lda # ZS_COL_WIDTH_MIN
--       sta zs_cols, x
-        dex
-        bne -
-
-        rts
-
 
 input:
 ;===============================================================================
@@ -151,22 +127,10 @@ input:
         
         jmp cursor_right
 
-        ldx zp_view.col
-        inx
-        beq @rts
-        
-        stx zp_view.col
-        jmp draw_screen
-
 @left:  cmp # PET_CRSR_LT
         ;-----------------------------------------------------------------------
         bne @rts
         
-        ; if at column zero, cannot scroll left!
-        lda zp_view.col
-        beq @rts
-
-        dec zp_view.col
-        jmp draw_screen
+        jmp cursor_left
 
 @rts:   rts

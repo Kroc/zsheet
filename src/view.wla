@@ -14,24 +14,25 @@
         col             BYTE    ; top-left column in view (scroll-offset)
         row             WORD    ; top-left row in view (scroll-offset)
         y               BYTE    ; screen-row the view begins at
-        h               BYTE    ; number of screen-rows visible in the view
+        h               BYTE    ; height of the view
+        cols            BYTE    ; number of columns visible, set by `set_col`
         cursor          INSTANCEOF Rc
 .ENDST
 
-.RAMSECTION "ZP_VIEWS"  SLOT "ZP" RETURNORG
+.RAMSECTION "ZP_VIEWS"  SLOT "ZP"       RETURNORG
         zp_view         INSTANCEOF View
 .ENDS
 
-.RAMSECTION "ZP_COPY"   SLOT "ZP" RETURNORG
+.RAMSECTION "ZP_COPY"   SLOT "ZP"       RETURNORG
         ; a destination pointer for copying screen rows
-        zp_screen_copy  WORD
+        zp_screen_copy  ADDR
         ; a destination pointer for copying colour-RAM rows
-        zp_colour_copy  WORD
+        zp_colour_copy  ADDR
 .ENDS
 
-.RAMSECTION "ZS_WORK"   SLOT "LORAM" RETURNORG
-        ; a list of the column widths currently on screen
-        view_col_widths DS VIEW_COLS
+.RAMSECTION "ZP_COL"    SLOT "ZP"       RETURNORG
+        ; temporary byte for adding column widths
+        zp_w            BYTE
 .ENDS
 
 
@@ -40,8 +41,8 @@ init_view:
 ; intialise the default view properties:
 ;-------------------------------------------------------------------------------
         ldx # 0
-        jsr set_row
-        jsr set_col
+        jsr set_row             ; set view's row to 0
+        jsr set_col             ; set view's col to "A"
 
         ; set starting position of the cell cursor
         stx zp_view.cursor.col
@@ -68,32 +69,40 @@ set_col:
 ; set the view's column scroll offset,
 ; i.e. which column appears first:
 ;
-; this routine populates the cache of column widths currently visible
-; in the view, but it doesn't do any drawing 
+; don't change the value directly! this routine is needed to calculate
+; the last visible column in the view for use in scrolling
 ;
 ; in:   X       column number, 0-255
 ; out:  X, Y    (preserved)
 ;       A       (clobbered)
 ;-------------------------------------------------------------------------------
         stx.w @x+1              ; preserve X
-        sty.w @y+1              ; preserve Y
 
         stx zp_view.col         ; set the view's column number
 
-        ; copy the column widths, starting
-        ; from this column, to the cache:
-        ;
-        ldy # 0                 ; counter for the cache bytes
+        ; work out the last fully-visible column:
+        ; TODO: handle column 255
+        ;-----------------------------------------------------------------------
+        lda # 3                 ; TODO: size of the row numbers
+        sta zp_w                ; start cumulative width
+        clc
+        ;-----------------------------------------------------------------------
 -       lda zs_cols, x          ; read the column-width
-        sta view_col_widths, y  ; write to the cache
-        inx                     ; step forward. note that it doesn't matter
-        iny                     ;  if these wrap-around! the view will not 
-        cpy # VIEW_COLS         ;  draw beyond the 255th column
-        bcc -
+        adc # 1                 ; compensate for the cell-border
+        adc zp_w                ; add the cumulative total
+        cmp # SYS_SCREEN_COLS   ; check if this column clips the screen
+        bcs +                   ; stop loop when last column found
+        sta zp_w                ; update cumulative total
+        inx                     ; move to next column
+        bne -                   ; keep counting
+        ;-----------------------------------------------------------------------
++       txa                     ; (note: carry set due to loop exit condition!)
+        sbc zp_view.col         ; fix the absolute column number
+        sta zp_view.cols        ;  to be relative to the view
 
 @x      ldx # $88               ; restore X
-@y      ldy # $88               ; restore Y
         rts 
+
 
 set_row:
 ;===============================================================================
@@ -152,32 +161,38 @@ col_to_screen:
 ;===============================================================================
 ; for a given sheet-col, returns the screen-col it appears on, if visible:
 ;
+; note that `set_col` must have been
+; called prior for this to work properly
+;
 ; in:   A       sheet-col
 ; out:  carry   clear if column is on-screen, set if not visible
 ;       A       screen-col the sheet-col can be found on
 ;-------------------------------------------------------------------------------
+        sta.w @c+1              ; set sheet-col number to look for
+        
         jsr col_to_view
         bcs @rts
-
-        beq @left               ; for the first column, nothing to add!
+        beq @left               ; nothing to add for first column in view!
 
         stx.w @x+1              ; preserve X
-        sty.w @y+1              ; and Y
 
-        ; add column-widths until we get to the column we're looking for
+        ; add column-widths until we get to
+        ; the column we're looking for
         ;
-        tax                     ; counter for number of columns-widths to add
-        lda # 0                 ; running count of widths
-        tay                     ; on-screen column number starting from 0
--       adc.w view_col_widths,x ; add the col-width
-        iny                     ; move to next column
-        dex                     ; decrement column count
-        bne -                   ; keep goin?
+        lda # 0                 ; start cumulative total
+        ldx zp_view.col         ; start reading column-widths of the view
+-       adc zs_cols, x          ; add column-width to total
+        adc # 1                 ; add border-width
+        inx                     ; move to next column
+@c      cpx # $88               
+        bne -
 
-@x:     ldx # $88
-@y:     ldy # $88
+@x      ldx # $88               ; restore X
 
-@left:  adc # 3                 ; TODO: compensate for the row-numbers!
+        ; compensate for the left side of the view
+        ; that contains the row numbers
+@left:  adc # 3
+        cmp # SYS_SCREEN_COLS
 @rts:   rts
 
 
@@ -193,10 +208,12 @@ col_to_view:
         ; is the sheet-col within the view's scroll-offset?
         sec
         sbc zp_view.col
-        bcc @rts                ; if col is before view, exit with carry set
-        cmp # VIEW_COLS         ; if col after view, set carry
+        bcc @sec                ; if col is before view, exit with carry set
+        cmp zp_view.cols        ; if col after view, set carry
 
 @rts:   rts
+@sec:   sec
+        rts
 
 
 cursor_up:
@@ -213,6 +230,8 @@ cursor_up:
 
         jsr @draw               ; redraw previous row to clear cursor highlight
 
+        jsr draw_status_bar     ; TODO: use `draw_status_range`
+
         ; do we need to scroll the view?
         ;-----------------------------------------------------------------------
         ; we only want to scroll at the edges of the view rather than all the
@@ -225,10 +244,10 @@ cursor_up:
         ldx zp_view.row         ; do an off-by-one comparison on purpose
         cpx zp_view.cursor.row  ;  to aim for the 2nd sheet-row of the view
         bcc @draw
-        
+
         dec zp_view.row         ; move view up a row
         jsr scroll_up           ;  and do the hard scroll
-        
+
         lda zp_view.cursor.row  ; redraw sheet row to show/hide cursor
 
         ;-----------------------------------------------------------------------
@@ -255,6 +274,8 @@ cursor_down:
 
         stx zp_view.cursor.row  ; update row, but keep previous value in A
         jsr @draw               ; redraw previous row to clear cursor highlight
+
+        jsr draw_status_bar     ; TODO: use `draw_status_range`
 
         ; do we need to scroll the view?
         ;-----------------------------------------------------------------------
@@ -303,6 +324,35 @@ cursor_down:
 @rts:   rts
 
 
+cursor_left:
+;===============================================================================
+; move the cursor left one row:
+;-------------------------------------------------------------------------------
+        lda zp_view.cursor.col  ; are we at the left-most column?
+        beq @rts                ; can't go left!
+
+        tax
+        dex                     ; move left one row
+        stx zp_view.cursor.col  ; set the new value
+        ;;jsr draw_screen         ; redraw previous col to clear cursor highlight
+
+        ; do we need to scroll the view?
+        ;-----------------------------------------------------------------------
+        sec
+        lda zp_view.cursor.col  ; current absolute cursor col
+        sbc zp_view.col
+        bcs +
+
+        ldx zp_view.col
+        dex
+        jsr set_col
+
+        ;-----------------------------------------------------------------------
++       jmp draw_screen
+
+@rts:   rts
+
+
 cursor_right:
 ;===============================================================================
 ; move the cursor right one row:
@@ -313,35 +363,24 @@ cursor_right:
         beq @rts                ; if overflow 255->0, can't move right
 
         stx zp_view.cursor.col  ; update cursor col, but keep previous in A
-        jsr draw_screen         ; redraw previous col to clear cursor highlight
+        ;;jsr draw_screen         ; redraw previous col to clear cursor highlight
 
         ; do we need to scroll the view?
         ;-----------------------------------------------------------------------
-        ; we only want to scroll at the edges of the view rather than all the
-        ; time so we wait until the 2nd-to-last col in the view so that one col
-        ; is always visible before the cursor (instead of cursoring "blind")
-        ;
         lda zp_view.cursor.col  ; current absolute cursor col
         jsr col_to_view         ; get relative col number within the view
-        adc # 1                 ; add 1 to compensate for the 2nd-to-last col
-        
-        ; TODO: we need to know the actual number of columns that fit
-        ;               on the screen! (this should be calulated by `set_col`)
-        
-        jmp draw_screen
-        ;-----------------------------------------------------------------------
+        cmp zp_view.cols
+        bcc +
 
-        jsr @draw               ; redraw old col to erase cursor highlight
-                
+        ldx zp_view.col
+        inx
+        jsr set_col
+
         ;-----------------------------------------------------------------------
-@next:  lda zp_view.cursor.col  ; redraw the new col to add cursor highlight
-        
-        ;-----------------------------------------------------------------------
-@draw:  sta zp_drawrc.col       ; set the sheet-col to draw
-        jsr col_to_screen       ; from the sheet-col, get an on-screen col
-        bcs @rts
++       jmp draw_screen
 
 @rts:   rts
+
 
 scroll_down:
 ;===============================================================================
@@ -467,7 +506,7 @@ scroll_up:
 
         ;-----------------------------------------------------------------------
         lda zp_view.row         ; fill in the new row
-        sta zp_drawrc.row       ; TODO: this should be part of `scroll_view_up`
+        sta zp_drawrc.row
         jmp draw_row
 
 

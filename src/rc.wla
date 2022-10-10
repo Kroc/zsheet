@@ -1,9 +1,14 @@
-; function for working with "rc" (row-col) cell references:
+; ZSheet (c) copyright Kroc Camen 2022. unless otherwise noted,
+; licenced under a MIT licence; you may reuse and modify this code
+; how you please as long as you retain the copyright notice
+;
+; functions for working with "Rc" (row-col) cell references:
 
 .STRUCT Rc
         row     WORD
         col     BYTE
 .ENDST
+
 
 col_index_to_alpha_x:
 ;===============================================================================
@@ -16,6 +21,9 @@ col_index_to_alpha_x:
 ;       Y       (preserved)
 ;-------------------------------------------------------------------------------
         txa
+
+        ; fallthrough
+        ; ...
 
 col_index_to_alpha:
 ;===============================================================================
@@ -31,11 +39,12 @@ col_index_to_alpha:
         sec                     ; clear borrow for subtracting
 
 .IFDEF  OPTIMIZE_SIZE
+        ;///////////////////////////////////////////////////////////////////////
 -       sbc # 26                ; reduce index by 26
         bcc +                   ; if borrow occured, look up lower "A"-"Z"
         inx                     ; increment upper letter,
         bne -                   ; and check again
-.ELSE
+.ELSE   ;///////////////////////////////////////////////////////////////////////
         sbc # 26                ; reduce index by 26
         bcc +                   ; if borrow occured, look up lower "A"-"Z"
         inx                     ; ("A" upper letter)
@@ -64,7 +73,7 @@ col_index_to_alpha:
         bcc +                   ; if borrow occured, look up lower "A"-"Z"
         inx                     ; ("I" upper letter)
         sbc # 26                ; reduce index by 26
-.ENDIF
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
         ; because of the underflow, A is between -230 ($EA) and 255 ($FF).
         ; we need to fix this number to between $41 ("A") and $5A ("Z"):
 +       adc # 26+'A'

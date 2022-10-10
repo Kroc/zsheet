@@ -232,7 +232,61 @@ draw_status_bar:
         ldy # 0                 ; starting at the left,
         ldx # SYS_SCREEN_COLS   ; across the whole screen,
         lda # VIC_CYAN          ; with this colour
-        jmp fast_spaces_colour
+        jsr fast_spaces_colour
+
+        ; fallthrough
+        ; ...
+
+draw_status_range:
+;===============================================================================
+; draw the current selection range on the status bar:
+;
+; TODO: this should ideally handle overprinting a shorter location over
+;       a longer one, e.g. covering "IV8191" with "A1", where extra spaces
+;       are need to avoid a munge like "A18191"
+;-------------------------------------------------------------------------------
+        ; set reverse-video drawing
+        lda # %10000000
+        sta zp_print_mask
+
+        ldx # SYS_SCREEN_ROWS-2 ; move to the 2nd to last screen row,
+        jsr set_scr_addr        ; where the status bar is
+        ldy # 2
+
+        lda # '@'               ; print the leading "@"
+        jsr print_char
+
+        ; print cursor column:
+        ;-----------------------------------------------------------------------
+        ; TODO: this should be its own routine since the same code
+        ;       is used when printing headers
+        ;
+        lda zp_view.cursor.col
+        jsr col_index_to_alpha  ; convert to letter(s)
+        cpx # $40               ; is there an upper-letter?
+        beq +                   ; if not, skip over printing upper-letter
+
+        pha                     ; put aside lower-letter
+        txa                     ; get upper-letter
+        ora # %10000000         ; set reverse video
+        sta [zp_screen], y      ; print upper-letter
+        iny                     ; move to next character on screen
+        pla                     ; retrieve lower-letter
+
++       ora # %10000000         ; set reverse video
+        sta [zp_screen], y      ; print lower-letter
+        iny
+
+        ; print cursor row:
+        ;-----------------------------------------------------------------------
+        ; TODO: there should be an optimised 4-digit routine for printing
+        ;       row numbers as the full 16-bit range is not needed
+        ;
+        lda zp_view.cursor.row+LO
+        ldx # 0
+        jsr print_number_word
+
+        rts
 
 
 draw_formula_bar:
@@ -286,7 +340,7 @@ draw_col_headers:
         ; keep drawing columns until we reach the edge
         ; of the screen, or we reach column 255 ("IV")!
         ;
--       lda # 2                 ; TODO: column width
+-       lda zs_cols, x          ; get column width
         jsr draw_col_header     ; draw the column header
         cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
         beq +                   ; if so -- stop drawing column headers
@@ -371,22 +425,23 @@ draw_col_header:
         ; print the right-border:
         lda # $91
 .IFDEF  OPTIMIZE_SIZE
+        ;///////////////////////////////////////////////////////////////////////
         jsr print_char_colour
-.ELSE
+.ELSE   ;///////////////////////////////////////////////////////////////////////
         ;;ora zp_print_mask
         sta [zp_screen], y
         lda zp_print_colour
         sta [zp_colour], y
         iny
-.ENDIF
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
 
         ; print the column title ("A"-"IV")
         ;-----------------------------------------------------------------------
 +       sty zp_a                ; remember screen position after column
         ldy zp_y                ; go back to start of column header
 
-        ldx zp_x                ; get column index
-        jsr col_index_to_alpha_x; convert to letter(s)
+        lda zp_x                ; get column index
+        jsr col_index_to_alpha  ; convert to letter(s)
         cpx # $40               ; is there an upper-letter?
         beq +                   ; if not, skip over printing upper-letter
 
@@ -435,7 +490,7 @@ draw_row:
 ;       X       (preserved)
 ;       A       (clobbered)
 ;-------------------------------------------------------------------------------
-        stx zp_x                ; backup X
+        stx.w @x+1              ; backup X
 
         ; is the selection within this row?
         asl zp_row_sel
@@ -465,8 +520,8 @@ draw_row:
 
         ; reset the column number to where the view
         ; is currently scrolled horizontally
-        lda zp_view.col
-        sta zp_drawrc.col
+        ldx zp_view.col
+        stx zp_drawrc.col
         
         ; keep drawing cells until we reach the edge of the screen:
         ;-----------------------------------------------------------------------
@@ -502,8 +557,8 @@ draw_row:
         tax
         asl zp_print_mask       ; turn off reverse-video
         jsr fast_spaces         ; print spaces to the end of the screen
-
-+       ldx zp_x                ; restore row number
++       ;-----------------------------------------------------------------------
+@x      ldx # $88               ; restore row number
 
         ; add Y to the screen address to reset
         ; Y to zero on the next screen row
@@ -525,6 +580,8 @@ draw_column:
 ;
 ; draws only the content of one column, i.e. for side-scrolling
 ;-------------------------------------------------------------------------------
+        ; TODO
+        ;
         rts
 
 
@@ -535,7 +592,9 @@ draw_cell:
 ; in:   Y       starting screen position, where `zp_screen` is screen row
 ;               addr, e.g. `zp_screen` = $0400, Y is sceen col. 0-39
 ;-------------------------------------------------------------------------------
-        lda # 2                 ; TODO: cell width (fixed for now)
+        ldx zp_drawrc.col       ; current row (TODO: could be in X?)
+        lda zs_cols, x          ; get column width
+
         sta zp_a                ; set aside column width
         sty zp_y                ; set aside current screen position
         
@@ -583,27 +642,28 @@ draw_cell:
         adc # $0f
 +
 .IFDEF  OPTIMIZE_SIZE
+        ;///////////////////////////////////////////////////////////////////////
         jsr print_char_colour
-.ELSE
+.ELSE   ;///////////////////////////////////////////////////////////////////////
         ora zp_print_mask
         sta [zp_screen], y
         lda zp_print_colour
         sta [zp_colour], y
         iny
-.ENDIF
+.ENDIF  ;///////////////////////////////////////////////////////////////////////
 
         ; the print position is now at the end of the cell, preserve
         ; this so that further printing continues after the cell
-++      sty.w @ldy+1
+++      sty.w @y+1
 
         ; print cell contents:
         ;-----------------------------------------------------------------------
         ldy zp_y                ; snap back to the beginning of the cell
 
         ; TODO: print the cell contents to an off-screen buffer and copy
-        ;       to the screen to be able to clip properly. it'll be too
-        ;       difficult to test between each character printer, 
+        ;       to the screen to be able to clip properly? it'll be too
+        ;       difficult to test between each character printed, 
         ;       particularly with things like centred-text
         ;
-@ldy:   ldy # $88               ; return next screen-position
+@y:     ldy # $88               ; return next screen-position
         rts
