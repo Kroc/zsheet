@@ -83,7 +83,7 @@ init_sheet:
         ; populate the column width for all columns:
         ;-----------------------------------------------------------------------
         ldx # 0                 ; counter, 256 (underflows first)
-        lda # ZS_COL_WIDTH_MIN
+        lda # ZS_COL_WIDTH_DEFAULT
 -       sta zs_cols, x
         dex
         bne -

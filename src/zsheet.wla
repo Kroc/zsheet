@@ -50,6 +50,7 @@
 .DEF    ZS_COLS_MAX          256
 .DEF    ZS_COL_WIDTH_MIN     2
 .DEF    ZS_COL_WIDTH_MAX     32
+.DEF    ZS_COL_WIDTH_DEFAULT 5
 .DEF    ZS_ROWS_MAX          8192
 
 ; begin code:
