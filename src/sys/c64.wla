@@ -9,17 +9,9 @@
 .DEF    CPU_6502        1       ; similar enough to a 6502 to warrant this
 .DEF    CPU_6510        1       ; specifically, the C64 uses a 6510 CPU
 
-; the system-specific routine for printing a single character, in the native
-; character encoding: (for Commodore machines, this is PETSCII)
-;
-; in this case, a wrapper isn't needed, so to avoid an unnecessary JMP-chain
-; we provide the KERNAL ROM address rather than a local routine
-;
-; NOTE: the KERNAL entrypoint is at $FFD2, but this goes through some
-;       additional jumps and checks which output device is selected;
-;       for speed we use a ROM address that always prints to the screen
-;
-.DEF    sys_chrout      $e716 ;;KERNAL_CHROUT_ADDR
+; macros for 6502-based systems (6502, 6510, 65C02)
+; to polyfill differences in instruction sets
+.INC    "sys/cpu_65xx.wla"
 
 ; number of rows / columns in text-mode, 1-based.
 ; (this is defined across different systems to provide
@@ -29,11 +21,7 @@
 .DEF    SYS_SCREEN_ROWS 25
 
 .INC    "sys/petscii.wla"
-.INC    "sys/c64_mem.wla"       ; C64-specific memory addresses
+.INC    "sys/c64_mem.wla"
 .INC    "sys/c64_cia.wla"
 .INC    "sys/c64_vic.wla"
 .INC    "sys/c64_kernal.wla"
-
-; macros for 6502-based systems (6502, 6510, 65C02)
-; to polyfill differences in instruction sets
-.INC    "sys/cpu_65xx.wla"

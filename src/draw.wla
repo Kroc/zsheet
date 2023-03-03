@@ -20,12 +20,15 @@
 .ENDS
 
 .RAMSECTION "ZP_DRAWRC" SLOT "ZP" RETURNORG
-        ;-----------------------------------------------------------------------
-        zp_drawrc       INSTANCEOF Rc
+;///////////////////////////////////////////////////////////////////////////////
+        zp_draw         INSTANCEOF Rc
         ; during drawing of column & row headers and cells, these are flags
         ; used to indicate if the selection is within the current column/row
         zp_col_sel      BYTE
         zp_row_sel      BYTE
+        ; counter when drawing multiple rows or columns
+        zp_c            BYTE
+;///////////////////////////////////////////////////////////////////////////////
 .ENDS
 
 
@@ -127,7 +130,7 @@ bump_addr_copy:
 
 bump_addr:
 ;===============================================================================
-; add Y to `zp_screen` & `zp_colour`
+; add Y to `zp_screen` & `zp_colour`:
 ;
 ; when indexing using Y, this routine is used to bump the 16-bit address
 ; up according to the value in Y to avoid an 8-bit rollover in Y
@@ -153,6 +156,25 @@ bump_addr:
         rts
 
 
+next_scr_row:
+;===============================================================================
+; bump the screen and colour addresses to the next row; i.e. add 40
+;
+; out:  Y       (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        clc                     ; prepare for math!
+        lda zp_screen+LO
+        adc # SYS_SCREEN_COLS
+        bcc +                   ; no overflow? skip hi-bytes
+        inc zp_screen+HI        ; increment the print address hi-byte,
+        inc zp_colour+HI        ; and the colour address likewise
++       sta zp_screen+LO        ; update the address lo-byte --
+        sta zp_colour+LO        ; shared between print & colour
+        
+        rts
+
+/*
 highlight_chars:
 ;===============================================================================
 ; convert some characters on screen into reverse-video
@@ -188,11 +210,11 @@ unlight_chars:
         dex
         bne -
         rts
-
+*/
 
 draw_screen:
 ;===============================================================================
-; does a complete screen draw
+; does a complete screen draw:
 ;
 ;-------------------------------------------------------------------------------
         jsr draw_tabs
@@ -222,7 +244,7 @@ draw_status_bar:
 ; do a complete draw of the status bar:
 ;-------------------------------------------------------------------------------
         ldx # SYS_SCREEN_ROWS-2 ; move to the 2nd to last screen row,
-        jsr set_scr_addr        ; where the status bar is
+        jsr set_scr_addr        ;  where the status bar is
         
         ; set reverse-video drawing
         lda # %10000000
@@ -230,8 +252,8 @@ draw_status_bar:
 
         ; print spaces:
         ldy # 0                 ; starting at the left,
-        ldx # SYS_SCREEN_COLS   ; across the whole screen,
-        lda # VIC_CYAN          ; with this colour
+        ldx # SYS_SCREEN_COLS   ;  across the whole screen,
+        lda # VIC_CYAN          ;  with this colour
         jsr fast_spaces_colour
 
         ; fallthrough
@@ -242,8 +264,8 @@ draw_status_range:
 ; draw the current selection range on the status bar:
 ;
 ; TODO: this should ideally handle overprinting a shorter location over
-;       a longer one, e.g. covering "IV8191" with "A1", where extra spaces
-;       are need to avoid a munge like "A18191"
+;       a longer one, e.g. covering "IV8191" with "A2", where extra spaces
+;       are need to avoid a munge like "A28191"
 ;-------------------------------------------------------------------------------
         ; set reverse-video drawing
         lda # %10000000
@@ -261,7 +283,7 @@ draw_status_range:
         ; TODO: this should be its own routine since the same code
         ;       is used when printing headers
         ;
-        lda zp_view.cursor.col
+        lda zp_view.sel.col
         jsr col_index_to_alpha  ; convert to letter(s)
         cpx # $40               ; is there an upper-letter?
         beq +                   ; if not, skip over printing upper-letter
@@ -282,8 +304,8 @@ draw_status_range:
         ; TODO: there should be an optimised 4-digit routine for printing
         ;       row numbers as the full 16-bit range is not needed
         ;
-        lda zp_view.cursor.row+LO
-        ldx # 0
+        lda zp_view.sel.row_lo
+        ldx zp_view.sel.row_hi
         jsr print_number_word
 
         rts
@@ -335,7 +357,7 @@ draw_col_headers:
 
         ; first column to begin drawing
         ldx zp_view.col
-        stx zp_drawrc.col
+        stx zp_draw.col
 
         ; keep drawing columns until we reach the edge
         ; of the screen, or we reach column 255 ("IV")!
@@ -361,9 +383,8 @@ draw_col_headers:
         ; add the inverted value of the screen width
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
-        tax
-        asl zp_print_mask       ; turn off reverse-video
-        jsr fast_spaces         ; print spaces to the end of the screen
+        asl zp_print_mask       ; (turn off reverse-video)
+        jsr fast_spaces_A       ; print spaces to the end of the screen
 
         ; add Y to the screen address to reset
         ; Y to zero on the next screen row
@@ -392,8 +413,11 @@ draw_col_header:
 
         ; we want to highlight the column if the cursor /
         ; selection is within this column
+        ;
+        ; TODO: this selecting of colour should be in a routine / 
+        ;       optimised to not need a branch?
         lda # VIC_CYAN
-        cpx zp_view.cursor.col
+        cpx zp_view.sel.col
         bne +
         lda # VIC_YELLOW
 +       sta zp_print_colour
@@ -441,22 +465,7 @@ draw_col_header:
         ldy zp_y                ; go back to start of column header
 
         lda zp_x                ; get column index
-        jsr col_index_to_alpha  ; convert to letter(s)
-        cpx # $40               ; is there an upper-letter?
-        beq +                   ; if not, skip over printing upper-letter
-
-        pha                     ; put aside lower-letter
-        txa                     ; get upper-letter
-        ora # %10000000         ; set reverse video
-        sta [zp_screen], y      ; print upper-letter
-        iny                     ; move to next character on screen
-        pla                     ; retrieve lower-letter
-
-        cpy # SYS_SCREEN_COLS
-        beq @end
-
-+       ora # %10000000         ; set reverse video
-        sta [zp_screen], y      ; print lower-letter
+        jsr print_colnum        ; prints column name, clipping against edge
 
 @end:   ldx zp_x                ; restore column index
         ldy zp_a                ; restore screen column
@@ -468,14 +477,19 @@ draw_rows:
 ; draw a series of rows:
 ;
 ;-------------------------------------------------------------------------------
-        ldx zp_view.h           ; number of rows to draw (1-based)
-        lda zp_view.row         ; start from the row defined in `zp_drawrc`
-        sta zp_drawrc.row
+        lda zp_view.row_lo
+        sta zp_draw.row_lo
+        lda zp_view.row_hi
+        sta zp_draw.row_hi
 
+        lda zp_view.rows        ; number of rows to draw (1-based)
+        sta zp_c                ; set the counter to keep track
 -       jsr draw_row
-        inc zp_drawrc.row       ; move to next row
-        dex
-        bne -
+        inc zp_draw.row_lo      ; move to next row
+        bne +                   ; did the lo-byte overflow?
+        inc zp_draw.row_hi      ; if so, increment hi-byte
++       dec zp_c                ; decrement count of rows to draw
+        bne -                   ; all done?
 
         rts
 
@@ -485,18 +499,23 @@ draw_row:
 ; draws a full sheet row, including the row number:
 ; this routine is used to fill in a row after scrolling vertically
 ;
-; out:  Y       Y, screen-column, is reset to 0 and `zp_screen` /
-;               `zp_colour` are moved forward to the next screen row
-;       X       (preserved)
-;       A       (clobbered)
+; in:   zp_draw.row             sheet-row number to draw (16-bit)
+; out:  Y                       Y, screen-column, is reset to 0 and the drawing
+;                               address is moved forward to the next screen row
+;       X                       (preserved)
+;       A                       (clobbered)
 ;-------------------------------------------------------------------------------
         stx.w @x+1              ; backup X
 
         ; is the selection within this row?
-        asl zp_row_sel
-        clc
-        lda zp_drawrc.row
-        eor zp_view.cursor.row
+        ;
+        asl zp_row_sel          ; remove any previous result
+        clc                     ; default to "no"
+        lda zp_draw.row_hi      ; compare row hi-bytes first
+        eor zp_view.sel.row_hi
+        bne +
+        lda zp_draw.row_lo
+        eor zp_view.sel.row_lo
         bne +
         ; set the flag to indicate this row is part of the selection
         ; (the row-header will be highlighted)
@@ -521,14 +540,14 @@ draw_row:
         ; reset the column number to where the view
         ; is currently scrolled horizontally
         ldx zp_view.col
-        stx zp_drawrc.col
+        stx zp_draw.col
         
         ; keep drawing cells until we reach the edge of the screen:
         ;-----------------------------------------------------------------------
 -       asl zp_col_sel
         clc
-        lda zp_drawrc.col
-        eor zp_view.cursor.col
+        lda zp_draw.col
+        eor zp_view.sel.col
         bne +
         ; set the flag to indicate this column is part of the selection
         sec
@@ -537,7 +556,7 @@ draw_row:
         jsr draw_cell           ; draw the current cell
         cpy # SYS_SCREEN_COLS   ; have we hit the edge of the screen?
         beq +                   ; if yes, stop drawing
-        inc zp_drawrc.col       ; move to next column number,
+        inc zp_draw.col         ; move to next column number,
         bne -                   ; and draw again
 
         ; when the cells hit the edge of the screen, Y will already be equal
@@ -554,9 +573,8 @@ draw_row:
         ; add the inverted value of the screen width
         adc # $ff-SYS_SCREEN_COLS
         eor # %11111111         ; flip the bits back to positive
-        tax
-        asl zp_print_mask       ; turn off reverse-video
-        jsr fast_spaces         ; print spaces to the end of the screen
+        asl zp_print_mask       ; (turn off reverse-video)
+        jsr fast_spaces_A       ; print spaces to the end of the screen
 +       ;-----------------------------------------------------------------------
 @x      ldx # $88               ; restore row number
 
@@ -567,11 +585,15 @@ draw_row:
 
 draw_row_number:
 ;===============================================================================
+;-------------------------------------------------------------------------------
         lda # %10000000         ; enable reverse video for row number
         sta zp_print_mask
         
-        lda zp_drawrc.row+LO
+        ; TODO: extend to 4-digits
+        lda zp_draw.row_lo
         jmp print_number_byte
+
+-       rts
 
 
 draw_column:
@@ -579,20 +601,56 @@ draw_column:
 ; draw an entire column:
 ;
 ; draws only the content of one column, i.e. for side-scrolling
+;
+; in:   A       sheet-col
 ;-------------------------------------------------------------------------------
-        ; TODO
+        sta zp_draw.col         ; set drawing column reference
+        jsr col_to_screen       ; get screen x-pos for the sheet column in view
+        bcs -                   ; (if not on screen, quit early)
+        tay                     ; put to Y, our screen-col drawing position
+        
+        ; after each cell is printed we need to return to the same
+        ; X-position, but move to the next screen row
+        sty.w @y+1
+
+        ; start at the first row in the view
+        lda zp_view.row_lo
+        sta zp_draw.row_lo
+        ldx zp_view.row_hi
+        stx zp_draw.row_hi
+        jsr row_to_screen       ; sheet row (XA) to screen row (A)
+        tax
+        jsr set_scr_addr        ; set the row on screen to begin drawing
+
+        lda zp_view.rows        ; number of rows to draw
+        sta zp_c
+
+        ; TODO: we need to set column and row-select flags;
+        ;       `draw_cell` doesn't calculate these to avoid repititon
         ;
+@y      ldy # $88               ; reset the screen X-position to draw the cell
+        jsr draw_cell           ; draw one cell
+
+        inc zp_draw.row_lo      ; move to the next sheet row (lo-byte)
+        bne +                   ; did that overflow?
+        inc zp_draw.row_hi      ; bump sheet row hi-byte
++       jsr next_scr_row        ; move screen address to the next screen row
+
+        dec zp_c                ; one less row to draw
+        bne @y                  ; keep looping?
+
         rts
 
 
 draw_cell:
 ;===============================================================================
-; draws the contents of the cell referenced by `zp_drawrc`:
+; draws the contents of the cell referenced by `zp_draw`:
 ;
 ; in:   Y       starting screen position, where `zp_screen` is screen row
 ;               addr, e.g. `zp_screen` = $0400, Y is sceen col. 0-39
 ;-------------------------------------------------------------------------------
-        ldx zp_drawrc.col       ; current row (TODO: could be in X?)
+        stx.w @x+1              ; preserve X
+        ldx zp_draw.col         ; current sheet column (TODO: could be in X?)
         lda zs_cols, x          ; get column width
 
         sta zp_a                ; set aside column width
@@ -666,4 +724,5 @@ draw_cell:
         ;       particularly with things like centred-text
         ;
 @y:     ldy # $88               ; return next screen-position
+@x:     ldx # $88               ; restore X
         rts

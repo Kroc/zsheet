@@ -8,12 +8,79 @@
 .RAMSECTION "ZP_TEMP"   SLOT "ZP"       RETURNORG
         ;-----------------------------------------------------------------------
         ; a temporary value available for conversions
-        zp_temp        .WORD
-        zp_temp1        DB
-        zp_temp2        DB
+        zp_temp         .WORD
+        zp_temp1         DB
+        zp_temp2         DB
         ; output value
         zp_word         WORD
 .ENDS
+
+.RAMSECTION "ZP_BUFFER" SLOT "ZP" RETURNORG
+;///////////////////////////////////////////////////////////////////////////////
+        ; in order to clip cell contents against column widths and screen edges
+        ; a buffer is used to prepare cell contents before copying to screen
+        ; (it would be laborious to check clipping for every char printed)
+        zp_buffer       DSB ZS_COL_WIDTH_MAX
+        ; this is the current cursor position within the print buffer
+        zp_index        BYTE
+;///////////////////////////////////////////////////////////////////////////////
+.ENDS
+
+
+clear_buffer:
+;===============================================================================
+; clears the print buffer:
+;-------------------------------------------------------------------------------
+        lda # 0
+.REPEAT ZS_COL_WIDTH_MAX INDEX I
+        sta zp_buffer+I
+.ENDR   sta zp_index
+        rts
+
+
+print_buffer:
+;===============================================================================
+; prints the buffer to the screen:
+;
+; ensure the screen position has already been set via `set_scr_addr`.
+; printing will automatically clip against the screen edge
+;
+; in:   X       max number of characters to print
+;       Y       offset from `zp_screen`, i.e. screen X-position
+;
+; out:  A       (clobbered)
+;       Y       the screen offset is moved forward
+;               by the number of printed chars
+;-------------------------------------------------------------------------------
+        ; calculate how many chars will fit
+        ; TODO
+        rts
+
+
+print_colnum: ;(not a typo! :P)
+;===============================================================================
+; print a column's number as alpha, i.e. A-IV:
+;
+; in:   A       column index, 0-255
+;-------------------------------------------------------------------------------
+        jsr col_index_to_alpha  ; convert column number to letter(s)
+        cpx # $40               ; is there an upper-letter?
+        beq +                   ; if not, skip over printing upper-letter
+
+        pha                     ; put aside lower-letter
+        txa                     ; get upper-letter
+        ora zp_print_mask       ; apply case or reverse-video, if set
+        sta [zp_screen], y      ; print upper-letter
+        iny                     ; move to next character on screen
+        pla                     ; retrieve lower-letter
+
+        cpy # SYS_SCREEN_COLS   ; have we reached the edge of the screen?
+        beq @rts                ; if yes, clip and skip
+
++       ora zp_print_mask       ; apply case or reverse-video, if set
+        sta [zp_screen], y      ; print lower-letter
+        iny                     ; move to next character on screen
+@rts:   rts
 
 
 print_char:
@@ -44,8 +111,8 @@ print_char_colour:
 ; out:  Y       Y is incremented by 1
 ;       A, X    (preserved)                                             ;+6=6
 ;-------------------------------------------------------------------------------
-        ora zp_print_mask                                               ;+3=9
-        sta [zp_screen], y                                              ;+6=15
+        ora zp_print_mask       ; apply reverse video, if set           ;+3=9
+        sta [zp_screen], y      ; write the screen code                 ;+6=15
         lda zp_print_colour                                             ;+3=18
         sta [zp_colour], y                                              ;+6=24
         iny                                                             ;+2=26
@@ -205,9 +272,12 @@ fast_spaces_colour:
         ; restore Y to go back to the start position and draw the spaces
 @ldy    ldy # 0
 
+        ; fallthrough
+        ; ...
+
 fast_spaces:                                                            ;+6=6
 ;===============================================================================
-; print up to 40 spaces, quickly
+; print up to 40 spaces, quickly:
 ;
 ; in:   X       number of spaces to print
 ;       Y       current offset from `zp_screen` to start at
@@ -224,6 +294,30 @@ fast_spaces:                                                            ;+6=6
         lda # ' '               ; use a space character                 ;+2=16
         ora zp_print_mask       ; apply reverse-video, if set (bit 7)   ;+3=19
 @jmp    jmp spaces_chars                                                ;+3=22
+
+
+fast_spaces_A:                                                          ;+6=6
+;===============================================================================
+; print up to 40 spaces, quickly:
+; (this version does not use the X register)
+;
+; in:   A       number of spaces to print
+;       Y       current offset from `zp_screen` to start at
+;               i.e. the screen column to print from
+;
+; out:  Y       Y is returned incremented by A;
+;               i.e. ready to write next value
+;       X       (preserved)
+;       carry   (preserved)
+;       A       (clobbered)
+;-------------------------------------------------------------------------------
+        sta.w @lo+1             ; use the char count as the table entry ;+4=10
+@lo     lda.w spaces_table      ; read back the offset in the routine   ;+4=14
+        sta.w @jmp+1            ; modify the jump                       ;+4=18
+
+        lda # ' '               ; use a space character                 ;+2=20
+        ora zp_print_mask       ; apply reverse-video, if set (bit 7)   ;+3=23
+@jmp    jmp spaces_chars        ;                                       ;+3=26
 
 
 fast_colour:                                                            ;+6=6
@@ -251,13 +345,8 @@ fast_colour:                                                            ;+6=6
 
 ; NOTE: this section *must* be aligned to a 256-byte page!
 ;
-.SECTION fast_write     ALIGN 256       RETURNORG
+.SECTION "fast_write"           ALIGN 256       RETURNORG
 ;###############################################################################
-; note that this routine occupies 121 bytes and a second one that follows
-; occupies the same again, totalling 242 bytes. for speed purposes, these
-; routines *must* fit into one 256-byte page so that only the low byte of
-; the addresses are required
-
 spaces_chars:
 ;===============================================================================
 @chr40: sta [zp_screen], y                                              ;+6

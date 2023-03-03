@@ -2,60 +2,33 @@
 ; licenced under a MIT licence; you may reuse and modify this code
 ; how you please as long as you retain the copyright notice
 ;
-.DEF    NUL             0
-.DEF    LO              0
-.DEF    HI              1
-
 ; import machine-specific headers:
 ;-------------------------------------------------------------------------------
 .IFDEF  SYSTEM_C64
         .INC    "sys/c64.wla"
 .ENDIF
 
-; ZShell memory map:
-;===============================================================================
-;
-;  $0   $1000                                        $C000     $E000  $FFFF
-;  +--+-+--------------------------------------------+----+----+--------+
-;  |  | | SHEET DATA                                 | C1 | C2 | C3     |
-;  +--+-+--------------------------------------------+----+----+--------+
-;     $0800 < font                                        $D000
-;
-; $0400 screen
-; $0800 custom font
-; $1000 start of sheet data
-; $C000 C1: code
-; $D000 C2: code, cannot use I/O
-; $E000 C3: code, cannot use KERNAL
-;
-.DEF    zs_screen       $0400   ; screen-RAM
-.DEF    zs_font         $0800   ; custom font
-.DEF    zs_data         $1000   ; user-space starting address
-.DEF    zs_code         $c000   ; main code
 
-; the size of the free memory region for sheet data
-.DEF    ZS_DATA_SIZE    zs_code - zs_data
-
-; active device number (system-dependent);
-; this is the same ZP byte used by the KERNAL
-; to store the last-used device number
-;
-.DEF    zs_device       ZP_KERNAL_DEV                                   ;=$BA
-
-; when printing, we can easily flip between printing to the screen
-; and setting colour RAM by incrementing the hi-byte of `zp_screen`
-.DEF    COLOUR_OFFSET   $d8 - >zs_screen
+.RAMSECTION "ZP_REG"    SLOT "ZP"       RETURNORG
+        ;-----------------------------------------------------------------------
+        ; temporary locations for backing up registers;
+        ; cannot be nested, so should only be used within
+        ; routines that do not call any other routines
+        zp_a            BYTE
+        zp_x            BYTE
+        zp_y            BYTE
+.ENDS
 
 ;===============================================================================
-.DEF    ZS_COLS_MAX          256
-.DEF    ZS_COL_WIDTH_MIN     2
-.DEF    ZS_COL_WIDTH_MAX     32
-.DEF    ZS_COL_WIDTH_DEFAULT 5
-.DEF    ZS_ROWS_MAX          8192
+.DEF    ZS_COLS_MAX             256
+.DEF    ZS_COL_WIDTH_MIN        2
+.DEF    ZS_COL_WIDTH_MAX        32
+.DEF    ZS_COL_WIDTH_DEFAULT    5
+.DEF    ZS_ROWS_MAX             300
 
-; begin code:
-;===============================================================================
-.SLOT "HIRAM"
+
+.SLOT   "CODE"
+;###############################################################################
 
 init:
         jmp zsheet_init
@@ -83,6 +56,7 @@ zsheet_init:
         
         lda # %00000000         ; make sure the bitmask for printing is clear!
         sta zp_print_mask       ; (this is used to do reverse-video printing)
+        jsr clear_buffer        ; clear print buffer used for cell clipping
 
         ; change the VIC memory layout to position the text-screen & font
         lda # ((>zs_screen & %00111100) << 2) | ((>zs_font & %00111000) >> 2)

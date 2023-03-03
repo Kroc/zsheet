@@ -5,8 +5,10 @@
 ; functions for working with "Rc" (row-col) cell references:
 
 .STRUCT Rc
-        row     WORD
-        col     BYTE
+        row             .WORD
+        row_lo           BYTE
+        row_hi           BYTE
+        col             BYTE
 .ENDST
 
 

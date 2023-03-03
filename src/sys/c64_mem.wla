@@ -23,11 +23,11 @@
         ; main program RAM
         ; ("ROM" in WLA-DX parlance)
         ;
-        SLOTSIZE        $F7FA   ; $FFFA-$FFFF are 6502 interrupt vectors
-        SLOT 3          $0800   "MAIN"
+        SLOTSIZE        $C000-$0800
+        SLOT 3          $0800   "DATA"
 
         SLOTSIZE        $1000
-        SLOT 4          $C000   "HIRAM"
+        SLOT 4          $C000   "CODE"
         SLOT 5          $D000   "IO"
         SLOTSIZE        $2000
         SLOT 6          $E000   "KERNAL"
@@ -38,6 +38,29 @@
 .ROMBANKSIZE            $FDFA
 .ROMBANKS               1
 
+; ZSheet C64 memory map:
+;===============================================================================
+;
+;  $0   $1000                                        $C000     $E000  $FFFF
+;  +--+-+--------------------------------------------+----+----+--------+
+;  |  | | SHEET DATA                                 | C1 | C2 | C3     |
+;  +--+-+--------------------------------------------+----+----+--------+
+;     $0800 < font                                        $D000
+;
+; $0400 screen
+; $0800 custom font
+; $1000 start of sheet data
+; $C000 C1: code
+; $D000 C2: code, cannot use I/O
+; $E000 C3: code, cannot use KERNAL
+;
+.DEF    zs_screen       $0400   ; screen-RAM
+.DEF    zs_font         $0800   ; custom font
+.DEF    zs_data         $1000   ; user-space starting address
+.DEF    zs_code         $c000   ; main code
+
+; the size of the free memory region for sheet data
+.DEF    ZS_DATA_SIZE    zs_code - zs_data
 
 ;-------------------------------------------------------------------------------
 .DEF    basic_start     $0801   ; BASIC programs starting address
@@ -46,153 +69,3 @@
 .DEF    INPUT_LENGTH    80      ; capacity of input buffer
                                 ; (technically, 88 bytes are available, due to
                                 ;  the size of the input-buffer on the VIC-20)
-
-
-; critical zero-page addresses used by KERNAL / BASIC:
-;===============================================================================
-.RAMSECTION "ZP_00"     SLOT "ZP"       ORGA $00 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; CPU port: memory layout & Datasette
-        ;
-        ; memory address $00/$01 is hard-wired to the C64's 6510 CPU; the
-        ; "processor port", $01, controls the memory layout of the C64 as well
-        ; as the Datasette. the "data direction" register, $00, controls which
-        ; bits of the processor port can be written to, allowing you to mask
-        ; out writes to certain bits -- e.g. ignore writes to the Datasette
-        ; when changing memory layout
-        ;
-        CPU_MASK        BYTE    ; data direction register
-        CPU_CONTROL     BYTE    ; processor port (memory layout & Datasette)
-.ENDS
-
-;;.RAMSECTION "ZP_73"     SLOT $00 ORGA $73 FORCE RETURNORG
-;;        ;---------------------------------------------------------------------
-;;        ZP_CHRGET       DSB 23
-;;.ENDS
-;;
-;;.RAMSECTION "ZP_8B"     SLOT $00 ORGA $8b FORCE RETURNORG
-;;        ;---------------------------------------------------------------------
-;;        ZP_RND_SEED     DSB 5
-;;.ENDS
-
-.RAMSECTION "ZP_90"     SLOT "ZP"       ORGA $90 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; KERNAL I/O status, bit 6 = EOF
-        ZP_IO_STATUS    BYTE    ;=$90
-        ; a flag for key-state:
-        ; 127: stop, 223: C=, 239: SPACE
-        ; 251: CTRL, 255: no key pressed
-        ZP_KEY_FLAG     BYTE    ;=$91
-.ENDS
-
-.RAMSECTION "ZP_93"     SLOT "ZP"       ORGA $93 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; 0 = LOAD, 1 = VERIFY
-        ZP_KERNAL_LOAD  BYTE    ;=$93
-        
-        ; flag for indicating a byte is ready to go out the serial bus
-        .               BYTE    ;=$94
-        ; serial bus output register
-        ZP_SERIAL_OUT   BYTE    ;=$95
-.ENDS
-
-.RAMSECTION "ZP_97"     SLOT "ZP"       ORGA $97 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; temporary storage for X-register,
-        ; used in `KERNAL_CHRIN`
-        .               BYTE    ;=$97
-        ; "number of open I/O file; pointer to top of file table"
-        .               BYTE    ;=$98
-        ; current input device, defaults to $00 = keyboard
-        ZP_DEV_IN       BYTE    ;=$99
-        ; current output device, defaults to $03 = screen
-        ZP_DEV_OUT      BYTE    ;=$9A
-.ENDS
-
-.RAMSECTION "ZP_9D"     SLOT "ZP"       ORGA $9d FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ;KERNAL message display control:
-        ; bit 6 = error messages, bit 7 = control message 
-        .               BYTE
-.ENDS
-
-.RAMSECTION "ZP_A0"     SLOT "ZP"       ORGA $a0 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; C64's "jiffy clock", updated every 60th/s, even on PAL
-        ZP_JIFFY        DSB 3   ;=$A0/1/2
-        ; bit-counter for serial I/O
-        .               WORD    ;=$A3
-.ENDS
-
-.RAMSECTION "ZP_AE"     SLOT "ZP"       ORGA $ae FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; pointer to the last byte after a LOAD/VERIFY/SAVE operation
-        ZP_LOAD_LAST    WORD    ;=$AE
-.ENDS
-
-.RAMSECTION "ZP_B7"     SLOT "ZP"       ORGA $b7 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; length of current filename
-        ZP_FILE_NAMELEN BYTE    ;=$B7
-        ; current logical file number
-        ZP_FILE_NUM     BYTE    ;=$B8
-        ; current logical secondary address
-        ZP_FILE_ADR     BYTE    ;=$B9
-        ; current device number
-        ZP_DEV_NUM      BYTE    ;=$BA
-        ; pointer to current filename
-        ZP_FILENAME     WORD    ;=$BB
-.ENDS
-
-.RAMSECTION "ZP_C1"     SLOT "ZP"       ORGA $c1 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; start address for LOAD / SAVE
-        .               WORD    ;=$C1
-        ; end address for LOAD / SAVE
-        .               WORD    ;=$C3
-        ; matrix co-ordinate of last key press, $40 = none
-        ZP_KEY_MATRIX   BYTE    ;=$C5
-        ; number of keys in the keyboard buffer
-        ZP_KEY_COUNT    BYTE    ;=$C6
-        ; print reverse characters?
-        ; (used with `KERNAL_CHROUT`)
-        ZP_PRINT_RVRS   BYTE    ;=$C7
-.ENDS
-
-.RAMSECTION "ZP_CB"     SLOT "ZP"       ORGA $cb FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        ; index into key-decoding table for currently pressed key, $40 = none
-        ZP_KEY_INDEX    BYTE    ;=$CB
-        ; flash cursor? $00 = yes, !$00 = no
-        ZP_CRSR_BLINK   BYTE    ;=$CC
-        ; counter for cursor flashing
-        ZP_CRSR_COUNT   BYTE    ;=$CD
-        ; character at cursor position
-        ZP_CRSR_CHAR    BYTE    ;=$CE
-        ; current cursor state, $00 = visible, !$00 = invisible
-        ZP_CRSR_STATE   BYTE    ;=$CF
-        ; device number for getting / putting characters;
-        ; read/written by `KERNAL_CHRIN` & `KERNAL_CHROUT`
-        ; $03 = screen, $00 = other
-        ZP_DEV_CHAR     BYTE    ;=$D0
-
-        .               BYTE    ;=$D1
-        .               BYTE    ;=$D2
-        .               BYTE    ;=$D3
-        .               BYTE    ;=$D4
-        .               BYTE    ;=$D5
-        .               BYTE    ;=$D6
-        
-        ; last character printed
-        ZP_LAST_CHAR    BYTE    ;=$D7
-
-        .               BYTE    ;$=D8
-.ENDS
-
-.RAMSECTION "ZP_F3"     SLOT "ZP"       ORGA $f3 FORCE RETURNORG
-        ;-----------------------------------------------------------------------
-        .               BYTE    ;=$F3
-        .               BYTE    ;=$F4
-        .               BYTE    ;=$F5
-        .               BYTE    ;=$F6
-.ENDS
