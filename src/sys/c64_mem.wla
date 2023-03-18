@@ -41,15 +41,15 @@
 ; ZSheet C64 memory map:
 ;===============================================================================
 ;
-;  $0   $1000                                        $C000     $E000  $FFFF
-;  +--+-+--------------------------------------------+----+----+--------+
-;  |  | | SHEET DATA                                 | C1 | C2 | C3     |
-;  +--+-+--------------------------------------------+----+----+--------+
-;     $0800 < font                                        $D000
+;    $400 $1000                                        $C000     $E000    $FFFF
+;  +-+-+--+--------------------------------------------+----+----+--------+
+;  | | |  | SHEET DATA                                 | C1 | C2 | C3     |
+;  +-+-+--+--------------------------------------------+----+----+--------+
+;  $0  $0800 < font                                        $D000
 ;
-; $0400 screen
-; $0800 custom font
-; $1000 start of sheet data
+; $0400 screen (1K)
+; $0800 font (2K)
+; $1000 sheet data
 ; $C000 C1: code
 ; $D000 C2: code, cannot use I/O
 ; $E000 C3: code, cannot use KERNAL
@@ -58,6 +58,19 @@
 .DEF    zs_font         $0800   ; custom font
 .DEF    zs_data         $1000   ; user-space starting address
 .DEF    zs_code         $c000   ; main code
+
+; alternative layout?
+;
+;    $400                             $8400               $D000 $E000     $FFFF
+;  +-+--------------------------------+-------------------+--+--+-------+-+
+;  | | SHEET DATA                     | CODE              |  |//| ?     | |
+;  +-+--------------------------------+-------------------+--+--+-------+-+
+;  $0                                                        $D800      $FC00
+;
+; $0400 sheet data (32K)
+; $8400 code
+; $D000 font (2K)
+; $FC00 screen (1K)
 
 ; the size of the free memory region for sheet data
 .DEF    ZS_DATA_SIZE    zs_code - zs_data

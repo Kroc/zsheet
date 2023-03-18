@@ -67,39 +67,36 @@ set_scr_addr:
 ; set the screen and colour-RAM drawing addresses,
 ; given a screen-row (not a sheet row!)
 ;
-; in:   X       screen row to set drawing address for
-; out:  X, Y    (preserved)
-;       A       (clobbered)
+; in:   X                       screen row to set drawing addresses to
+; out:  X, Y                    (preserved)
+;       A                       (clobbered)
 ;-------------------------------------------------------------------------------
         lda.w screen_addrs_lo, x
-        sta zp_screen+LO        ; the lo-bytes are shared between
-        sta zp_colour+LO        ; the screen-RAM and colour-RAM
+        sta.b zp_screen+LO      ; the lo-bytes are shared between
+        sta.b zp_colour+LO      ;  the screen-RAM and colour-RAM
         lda.w screen_addrs_hi, x
-        sta zp_screen+HI
+        sta.b zp_screen+HI
         lda.w colour_addrs_hi, x
-        sta zp_colour+HI
-        
+        sta.b zp_colour+HI
         rts
 
-set_scr_addr_copy:
-;===============================================================================
-        jsr set_scr_addr        ; set the main addresses first,
 
-        ; and then fall through to copy them
-        ; ...
-
-copy_addr:
+set_scr_dest:
 ;===============================================================================
-; copies the current screen and colour RAM addresses used for a block copy:
+; set the screen and colour-RAM destination addresses
+; for a screen copy given a screen-row:
+;
+; in:   X                       screen row to set copy destination addresses to
+; out:  X, Y                    (preserved)
+;       A                       (clobbered)
 ;-------------------------------------------------------------------------------
-        ldy # 2
--       lda zp_screen-1, y
-        sta zp_screen_copy-1, y
-        lda zp_colour-1, y
-        sta zp_colour_copy-1, y
-        dey
-        bne -
-
+        lda.w screen_addrs_lo, x
+        sta.b zp_screen_dest+LO ; the lo-bytes are shared between
+        sta.b zp_colour_dest+LO ;  the screen-RAM and colour-RAM
+        lda.w screen_addrs_hi, x
+        sta.b zp_screen_dest+HI
+        lda.w colour_addrs_hi, x
+        sta.b zp_colour_dest+HI
         rts
 
 
@@ -111,22 +108,23 @@ bump_addr_copy:
 ; destination address up according to the value in Y to avoid an 8-bit
 ; rollover in Y
 ;
-; in:   Y       offset to add to `zp_screen(_copy)` & `zp_colour(_copy)`
-; out:  Y       set to zero
-;       X       (preserved)
-;       A       (clobbered)
+; in:   Y                       current offset from the screen copy addresses
+; out:  Y                       set to zero
+;       X                       (preserved)
+;       A                       (clobbered)
 ;-------------------------------------------------------------------------------
         tya                     ; take current offset
+;;      bpl ++
         clc                     ; prepare for math!
-        adc zp_screen_copy+LO   ; add Y to the address lo-byte
+        adc zp_screen_dest+LO   ; add Y to the address lo-byte
         bcc +                   ; if it doesn't overflow, skip the hi-byte
-        inc zp_screen_copy+HI   ; increment the print address hi-byte,
-        inc zp_colour_copy+HI   ; and the colour address likewise
-+       sta zp_screen_copy+LO   ; update the address lo-byte --
-        sta zp_colour_copy+LO   ; these are the same between print & colour
+        inc zp_screen_dest+HI   ; increment the print address hi-byte,
+        inc zp_colour_dest+HI   ; and the colour address likewise
++       sta zp_screen_dest+LO   ; update the address lo-byte --
+        sta zp_colour_dest+LO   ; these are the same between print & colour
 
-        ; fall through to bump the main addresses and reset Y
-        ;
+++      ; fall through to bump the main addresses and reset Y
+        ; ...
 
 bump_addr:
 ;===============================================================================
@@ -135,12 +133,13 @@ bump_addr:
 ; when indexing using Y, this routine is used to bump the 16-bit address
 ; up according to the value in Y to avoid an 8-bit rollover in Y
 ;
-; in:   Y       offset to add to `zp_screen` & `zp_colour`
-; out:  Y       set to zero
-;       X       (preserved)
-;       A       (clobbered)
+; in:   Y                       current offset from the screen print addresses
+; out:  Y                       set to zero
+;       X                       (preserved)
+;       A                       (clobbered)
 ;-------------------------------------------------------------------------------
         tya                     ; take current offset
+;;      bpl ++
         clc                     ; prepare for math!
         adc zp_screen+LO        ; add Y to the address lo-byte
         bcc +                   ; no overflow? skip hi-bytes
@@ -148,12 +147,12 @@ bump_addr:
         inc zp_colour+HI        ; and the colour address likewise
 +       sta zp_screen+LO        ; update the address lo-byte --
         sta zp_colour+LO        ; shared between print & colour
-        
+
         ; Y is set back to zero so that `lda [zp_screen], y`
         ; reflects the same address as before!
         ldy # 0
         
-        rts
+++      rts
 
 
 next_scr_row:
@@ -342,7 +341,7 @@ draw_col_headers:
 ;
 ;-------------------------------------------------------------------------------
         ldx zp_view.y           ; set the screen address to the top of
-        jsr set_scr_addr        ; the view, where the column-headers reside
+        jsr set_scr_addr        ;  the View, where the column-headers reside
 
         ; left-hand offset:
         ;
@@ -500,6 +499,8 @@ draw_row:
 ; this routine is used to fill in a row after scrolling vertically
 ;
 ; in:   zp_draw.row             sheet-row number to draw (16-bit)
+;       zp_screen/colour        the screen address to draw at should be set
+;
 ; out:  Y                       Y, screen-column, is reset to 0 and the drawing
 ;                               address is moved forward to the next screen row
 ;       X                       (preserved)
@@ -605,7 +606,7 @@ draw_column:
 ; in:   A       sheet-col
 ;-------------------------------------------------------------------------------
         sta zp_draw.col         ; set drawing column reference
-        jsr col_to_screen       ; get screen x-pos for the sheet column in view
+        jsr col_to_screen       ; get screen x-pos for the sheet column in View
         bcs -                   ; (if not on screen, quit early)
         tay                     ; put to Y, our screen-col drawing position
         

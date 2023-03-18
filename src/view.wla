@@ -34,9 +34,9 @@
 .RAMSECTION "ZP_COPY"   SLOT "ZP"       RETURNORG
 ;///////////////////////////////////////////////////////////////////////////////
         ; a destination pointer for copying screen rows
-        zp_screen_copy  ADDR
+        zp_screen_dest  ADDR
         ; a destination pointer for copying colour-RAM rows
-        zp_colour_copy  ADDR
+        zp_colour_dest  ADDR
 ;///////////////////////////////////////////////////////////////////////////////
 .ENDS
 
@@ -67,8 +67,8 @@ init_view:
         ; set the position/size
         ; of the default View:
         ;
-        lda # 1                 ; sheet starts on the second screen row
-        sta zp_view.y
+        inx                     ; sheet starts on the second screen row
+        stx zp_view.y
         ; number of screen-rows in the View:
         ; height of the screen sans 1 for the table tabs
         ; and another 2 for the status & formula bar
@@ -103,11 +103,10 @@ set_col:
         ;-----------------------------------------------------------------------
         lda # 3                 ; TODO: size of the row numbers
         sta zp_w                ; start cumulative width
-        clc
         ;-----------------------------------------------------------------------
--       lda zs_cols, x          ; read the column-width
-        adc # 1                 ; compensate for the cell-border
-        adc zp_w                ; add the cumulative total
+-       sec                     ; compensate for the cell-border
+        lda zs_cols, x          ; read the column-width
+        adc zp_w                ; add cumulative total, +carry for cell-border
         cmp # SYS_SCREEN_COLS   ; check if this column clips the screen
         bcs +                   ; stop loop when last column found
         sta zp_w                ; update cumulative total
@@ -278,71 +277,48 @@ cursor_up:
         bne +                   ; any non-zero hi-byte implies row > 0
         lda zp_view.sel.row_lo  ; is the row lo-byte zero?
         bne ++                  ; if both hi-byte and lo-byte zero,
-        rts                     ;   cannot move cursor up
+        rts                     ;  cannot move cursor up
 
         ; move the cursor up one row:
         ;-----------------------------------------------------------------------
 +       lda zp_view.sel.row_lo  ; if the lo-byte is already 0 it will underflow
         bne ++                  ;  and the hi-byte will need to be adjusted
-        dec zp_view.sel.row_hi  ; decrement hi-byte
-++      dec zp_view.sel.row_lo  ; decrement lo-byte 
+        dec zp_view.sel.row_hi  ; decrement cursor row, hi-byte
+++      dec zp_view.sel.row_lo  ; decrement cursor row, lo-byte 
 
         ; redraw previous row to clear cursor highlight
         ; note that XA is the 16-bit sheet-row number
-        ;
-        ; TODO: undrawing the selection should be a separate
-        ;       routine because the selection can span a range
-        jsr @draw
+        jsr _draw_row
 
         ; update the selection location in the status bar
         jsr draw_status_bar     ; TODO: use `draw_status_range`
 
         ; do we need to scroll the view?
         ;-----------------------------------------------------------------------
+        ldx zp_view.row_hi      ; check View row, hi-byte
+        bne +                   ; any non-zero hi-byte implies row > 0
+        lda zp_view.row_lo      ; is the View row, lo-byte, zero?
+        beq @next               ; if both hi and lo-byte are zero, can't scroll
+
         ; we only want to scroll at the edges of the view rather than all the
         ; time so we wait until the 2nd row in the view so that one row is
         ; always visible above the cursor (instead of cursoring "blind")
         ;
-        ; if, having moved the cursor up, it's at row 0 then no scrolling
-        ; would be possible anyway so skip to drawing the new row in
-        ; 
-        ldx zp_view.sel.row_hi  ; check cursor row hi-byte
-        bne +                   ; any non-zero hi-byte implies row > 0
-        lda zp_view.sel.row_lo  ; is the row lo-byte zero?
-        beq @draw               ; if both hi and lo-byte zero, can't scroll
-
-        ; TODO: hi-bytes
+        ; TODO: when we allow panning the view without moving the cursor,
+        ; then we must snap the view to the cursor if it is outside the view
         ;
-+       
-        ldx zp_view.row         ; do an off-by-one comparison on purpose
-        cpx zp_view.sel.row     ;  to aim for the 2nd sheet-row of the view
-        bcc @draw
-
-        ; TODO: should use a macro or routine for decrementing row
-        ;       for any Rc struct within sheet bounds
-        ;
-        ldx zp_view.row_lo
-        bne +
-+
-        ldx zp_view.row_hi
-        dec zp_view.row         ; move view up a row
-        jsr scroll_up           ;  and do the hard scroll
-
+        lda zp_view.sel.row_lo
         ldx zp_view.sel.row_hi
++       jsr row_to_view         ; get the relative position of the cursor
+;;      bcs @next               ; (skip if cursor is outside view -- how?)
+        cmp # 0                 ; cursor on 2nd row of View?
+        bne @next
+
+        jsr scroll_up           ; move the rows on screen
+
+@next:  ldx zp_view.sel.row_hi
         lda zp_view.sel.row_lo  ; redraw sheet row to show/hide cursor
-
-        ; draw a row:
-        ;-----------------------------------------------------------------------
-@draw:  sta zp_draw.row_lo      ; set sheet-row to draw, lo-byte
-        stx zp_draw.row_hi      ; set sheet-row to draw, hi-byte
-        jsr row_to_screen       ; from the sheet-row, get an on-screen row
-        bcs @rts                ; if outside view, don't draw anything
-
-        tax                     ; screen-row to draw on
-        jsr set_scr_addr        ; set the screen drawing address
-        jmp draw_row            ; draw the row's contents!
--
-@rts:   rts
+        jmp _draw_row
 
 
 cursor_down:
@@ -364,9 +340,9 @@ cursor_down:
         ;  in the registers A & X -- this is so we can redraw the old row to
         ;  remove the selection highlight)
         ;
-+       inc zp_view.sel.row_lo  ; increment cursor row lo-byte
++       inc zp_view.sel.row_lo  ; increment cursor row, lo-byte
         bne +                   ; did it overflow?
-        inc zp_view.sel.row_hi  ; increment cursor row hi-byte
+        inc zp_view.sel.row_hi  ; -> increment cursor row, hi-byte
 +       jsr _draw_row           ; redraw previous row to clear cursor highlight
 
         ; update the current cell location in the status bar
@@ -428,11 +404,11 @@ cursor_down:
         ; ...
 
 _draw_row:
-;===============================================================================
-; internal routine to draw a single sheet-row on screen:
-;
-; in:   XA                      ; sheet-row (16-bit)
-;-------------------------------------------------------------------------------
+        ;=======================================================================
+        ; internal routine to draw a single sheet-row on screen:
+        ;
+        ; in:   XA              ; sheet-row (16-bit)
+        ;-----------------------------------------------------------------------
         sta zp_draw.row_lo      ; set sheet-row to draw, lo-byte
         stx zp_draw.row_hi      ; set sheet-row to draw, hi-byte
         jsr row_to_screen       ; from the sheet-row, get an on-screen row
@@ -464,12 +440,12 @@ scroll_down:
         ; write this count into the loop
         sta.w @ldx+1
         
-        ; set the source and destination addresses
+        ; set the destination addresses
         ; to the 2nd row of the view
         ldx zp_view.y
-        inx
-        inx
-        jsr set_scr_addr_copy
+        inx                     ; (skip column headers)
+        inx                     ; (skip first row)
+        jsr set_scr_dest
         ; now set the source address to the first row
         dex
         jsr set_scr_addr
@@ -477,10 +453,10 @@ scroll_down:
 @ldx    ldx # 1
         ;-----------------------------------------------------------------------
 @copy:  ldy # 0
--       lda [zp_screen_copy], y
-        sta [zp_screen], y
-        lda [zp_colour_copy], y
-        sta [zp_colour], y
+-       lda [zp_screen_dest], y
+        sta [zp_screen     ], y
+        lda [zp_colour_dest], y
+        sta [zp_colour     ], y
         iny
         cpy # floor( 256 / SYS_SCREEN_COLS ) * SYS_SCREEN_COLS
         bcc -
@@ -497,10 +473,10 @@ scroll_down:
 @rem:   ldx # 0
         beq @new
 
--       lda [zp_screen_copy], y
-        sta [zp_screen], y
-        lda [zp_colour_copy], y
-        sta [zp_colour], y
+-       lda [zp_screen_dest], y
+        sta [zp_screen     ], y
+        lda [zp_colour_dest], y
+        sta [zp_colour     ], y
         iny
         dex
         bne -
@@ -511,18 +487,94 @@ scroll_down:
         ; calculate the last visible row number and draw it
         ; whilst at the same time moving to the next row:
         ; (without affecting said last row number!)
-        ; 
+        ;
 @new:   clc
         lda zp_view.row_lo      ; starting row, lo-byte
         adc zp_view.rows        ; add number of visible rows
-        sta zp_draw.row_lo      ; row to draw, lo-byte
-        lda zp_view.row_hi      ; row to draw, hi-byte
+        sta zp_draw.row_lo      ; set row to draw, lo-byte
+        lda zp_view.row_hi      ; starting row, hi-byte
         inc zp_view.row_lo      ; (move View first row down one)
         bne +                   ; (did adding one to first row overflow?)
         inc zp_view.row_hi      ; (increment first row hi-byte)
 +       adc # 0                 ; ripple the carry of the bottom row
-        sta zp_draw.row_hi      ; update row to draw, hi-byte
+        sta zp_draw.row_hi      ; set row to draw, hi-byte
         jmp draw_row
+
+
+scroll_up:
+;===============================================================================
+; scroll the current View up a sheet-row:
+;
+;-------------------------------------------------------------------------------
+        ; when the View scrolls upwards a new row is revealed at the top and
+        ; the bottom row drops out of the View. rather than redrawing every
+        ; row we will shift the screen contents and only draw the new row
+        ;
+        ; we need to start with copying the 2nd-to-last row down to the
+        ; last row and then walk up the screen, copying rows down by one
+        ;
+        clc
+        lda zp_view.y           ; screen-row of the View (inc. column headers)
+        adc zp_view.h           ; add the height of the View (to bottom row)
+        tax
+        dex
+        dex
+        jsr set_scr_addr
+        inx
+        jsr set_scr_dest
+
+        ldx zp_view.rows        ; number of rows to copy (exclude col.headers)
+        dex
+        ;-----------------------------------------------------------------------
+@copy:  ldy # SYS_SCREEN_COLS-1 ; copy from last screen column to first
+-       lda [zp_screen     ], y ; read a byte from the upper row
+        sta [zp_screen_dest], y ; write to the lower row (copy down)
+        lda [zp_colour     ], y ; do the same with the colour RAM
+        sta [zp_colour_dest], y
+        dey
+        bpl -
+
+        ; once we reach the top, we need to redraw the topmost sheet-row
+        ;  so exit before moving the screen address up a screen-row
+        dex
+        beq @done
+
+        ; TODO: we should just use the screen-addr lookup table for this
+        ;
+        sec
+        lda.b zp_screen+LO
+        sbc # SYS_SCREEN_COLS
+        bcs +
+        dec.b zp_screen+HI
+        dec.b zp_colour+HI
+        sec                     ; set carry only when needed to save 2 cycles
++       sta.b zp_screen+LO
+        sta.b zp_colour+LO
+
+        lda.b zp_screen_dest+LO
+        sbc # SYS_SCREEN_COLS
+        bcs +
+        dec.b zp_screen_dest+HI
+        dec.b zp_colour_dest+HI
+        sec                     ; set carry only when needed to save 2 cycles
++       sta.b zp_screen_dest+LO
+        sta.b zp_colour_dest+LO
+
+        bcs @copy               ; (always branches)
+
+        ;-----------------------------------------------------------------------
+        ; move the View's first row up a row and draw it:
+        ;
+@done:  ldy zp_view.row_hi      ; View first row, hi-byte
+        ldx zp_view.row_lo      ; View first row, lo-byte
+        bne +                   ; if the lo-byte is 0 it will underflow
+        dey                     ; -> decrement View row, hi-byte
++       dex                     ; decrement View row, lo-byte
+        stx zp_view.row_lo
+        sty zp_view.row_hi
+        stx zp_draw.row_lo      ; TODO: have `draw_row` take row from XA
+        sty zp_draw.row_hi
+        jmp draw_row            ; (does not use current Y)
 
 
 cursor_left:
@@ -583,65 +635,6 @@ cursor_right:
 +       jmp draw_screen
 
 @rts:   rts
-
-
-scroll_up:
-;===============================================================================
-        ; we need to start with copying the 2nd-to-last row down to the
-        ; last row and then walk up the screen, copying rows down by one
-        ;
-        clc
-        lda.b zp_view.y
-        adc.b zp_view.h
-        tax
-        dex
-        dex
-        jsr set_scr_addr_copy
-        inx                     ; set the source address to the previous row
-        jsr set_scr_addr
-
-        ldx zp_view.h
-        dex
-        ;-----------------------------------------------------------------------
-@copy:  ldy # SYS_SCREEN_COLS-1
--       lda [zp_screen_copy], y
-        sta [zp_screen], y
-        lda [zp_colour_copy], y
-        sta [zp_colour], y
-        dey
-        bpl -
-
-        ; TODO: we should just use the screen-addr lookup table for this
-        ;
-@next:  sec
-        lda.b zp_screen+LO
-        sbc # SYS_SCREEN_COLS
-        bcs +
-        dec.b zp_screen+HI
-        dec.b zp_colour+HI
-        sec                     ; set carry only when needed to save 2 cycles
-+       sta.b zp_screen+LO
-        sta.b zp_colour+LO
-
-        lda.b zp_screen_copy+LO
-        sbc # SYS_SCREEN_COLS
-        bcs +
-        dec.b zp_screen_copy+HI
-        dec.b zp_colour_copy+HI
-+       sta.b zp_screen_copy+LO
-        sta.b zp_colour_copy+LO
-
-        dex
-        bne @copy
-
-        ;-----------------------------------------------------------------------
-        ; fill in the new row at the top:
-        ;
-        lda zp_view.row_lo
-        sta zp_draw.row_lo
-        lda zp_view.row_hi
-        sta zp_draw.row_hi
-        jmp draw_row
 
 
 .SECTION "COPYROWS_TABLE" BITWINDOW 8

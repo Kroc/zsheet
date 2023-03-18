@@ -6,8 +6,8 @@
 
 .STRUCT Rc
         row             .WORD
-        row_lo           BYTE
-        row_hi           BYTE
+         row_lo          BYTE
+         row_hi          BYTE
         col             BYTE
 .ENDST
 

@@ -21,7 +21,7 @@
 ;-------------------------------------------------------------------------------
 ; cell-blocks (batches of 32 cells) are allocated in a block-map.
 ; each block-map is a 16x16 grid of cell-blocks, i.e. 16 columns, where up to 16
-; cell-blocks can be allocated per column. therefore one block map can allocate
+; cell-blocks can be allocated per column. therefore one block-map can allocate
 ; up to 16x512 cells
 ;
 ; for most sheets one block-map should be sufficient but since a sheet

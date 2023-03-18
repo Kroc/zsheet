@@ -32,6 +32,7 @@ ECHO:
 IF ERRORLEVEL 1 EXIT /B 1
 
 REM # compress the program
+ECHO:
 ECHO Exomizer...
 %EXOMIZER% sfx $c000 -t64 -n -q ^
      -o "build\zsheet_c64-exo.prg" ^
@@ -41,6 +42,7 @@ ECHO Exomizer...
 IF ERRORLEVEL 1 EXIT /B 1
 
 REM # build a 1541 floppy disk image
+ECHO:
 %C1541% ^
     -format "zsheet,00" d64 "build/zsheet-c64.d64" ^
     -write  "build/zsheet_c64-exo.prg"  "zsheet"
@@ -48,3 +50,6 @@ REM # build a 1541 floppy disk image
 IF ERRORLEVEL 1 EXIT /B 1
 
 %VICE% --autostart "%~dp0build\zsheet-c64.d64"
+
+ECHO:
+ECHO OK.

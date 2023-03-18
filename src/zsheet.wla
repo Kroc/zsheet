@@ -63,7 +63,7 @@ zsheet_init:
         sta VIC_LAYOUT
 
         jsr init_sheet          ; initialise a blank sheet
-        jsr init_view           ; initialise default view
+        jsr init_view           ; initialise default View
 
         ; with everything configured, do a full screen redraw:
         ; we don't need to erase the screen beforehand as this routine
