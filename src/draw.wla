@@ -724,8 +724,8 @@ draw_cell:
         ;       difficult to test between each character printed, 
         ;       particularly with things like centred-text
         ;
-@y:     ldy # $88               ; return next screen-position
-@x:     ldx # $88               ; restore X
+@y      ldy # $88               ; return next screen-position
+@x      ldx # $88               ; restore X
         rts
 
 

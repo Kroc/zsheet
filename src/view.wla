@@ -79,6 +79,12 @@ init_view:
         lda # SYS_SCREEN_ROWS - 2 - 1 - 1
         sta zp_view.rows 
 
+;;        lda #< 200
+;;        sta zp_view.sel.row_lo
+;;        ldx #> 0
+;;        stx zp_view.sel.row_hi
+;;        jsr set_row
+
         rts
 
 
@@ -141,12 +147,12 @@ row_to_screen:
 ;===============================================================================
 ; for a given sheet-row, returns the screen-row it appears on, if visible:
 ;
-; in:   XA      sheet-row
-; out:  carry-  sheet-row is on-screen
-;       carry+  sheet-row is not visible
-;       A       screen-row the sheet-row can be found on;
-;               return value is undefined if sheet-row is not visible!
-;       X, Y    (preserved)
+; in:   XA                      sheet-row (16-bit)
+; out:  carry-                  sheet-row is on-screen
+;       carry+                  sheet-row is not visible
+;       A                       screen-row the sheet-row can be found on;
+;                               value is undefined if sheet-row is not visible!
+;       X, Y                    (preserved)
 ;-------------------------------------------------------------------------------
         jsr row_to_view
         bcs +
@@ -158,14 +164,15 @@ row_to_screen:
 row_to_view:
 ;===============================================================================
 ; given a sheet-row, returns which row of the View it appears on, if visible:
+; note that this DOES NOT INCLUDE the column header!
 ;
-; in:   XA      sheet-row
-; out:  carry-  sheet-row is on-screen
-;       carry+  sheet-row is not visible
-;       A       relative row-number the sheet-row can be found on,
-;               i.e. 0 = first row in the View. DOES NOT INCLUDE column header!
-;               return value is undefined if sheet-row is not visible!
-;       X, Y    (preserved)
+; in:   XA                      sheet-row (16-bit)
+; out:  carry-                  sheet-row is on-screen
+;       carry+                  sheet-row is not visible
+;       A                       relative row-number sheet-row can be found on,
+;                               i.e. 0 = first row in the View. return value
+;                               is undefined if sheet-row is not visible!
+;       X, Y                    (preserved)
 ;-------------------------------------------------------------------------------
         ; first, is the sheet-row within the View's scroll-offset?
         ; subtract the View's first row number from the parameter;
@@ -179,19 +186,24 @@ row_to_view:
         sbc zp_view.row_lo      ; subtract lo-bytes
         bcs @cmp                ; no underflow? do not check hi-bytes
 
-        ; the result of subtracting hi-bytes does not need to be stored,
-        ; only the state of the carry is needed. it is already implied
-        ; (by the branch above) that the hi-byte needs to carry, therefore
-        ; a greater than or *equal to* comparison will return the right
-        ; carry flag as equal-to is now equivalent to greater-than
+        ; an underflow here can mean that either the row is above the View,
+        ; or the calculation straddles the lo/hi byte boundary. if, after
+        ; applying the borrow, the hi-bytes are equal then the relative
+        ; offset is somewhere between 0-255 -- it could be on-screen or
+        ; below the View's limit
         ;
-        cpx zp_view.row_hi
-        bcs +  
-        
+        dex                     ; apply the borrow (don't keep hi-byte)
+        cpx zp_view.row_hi      ; are the hi-bytes now equal?
+        bne @rts                ; if not, offset is > 255, cannot be visible!
+                                ; note that this will return carry-set
+
+        ; the offset is <256 but could easily be
+        ; outside the View's visible range
+        ;
         ; is row below View? this CMP will return carry-clear
         ; if the row is inside the View and carry-set if outside
 @cmp:   cmp zp_view.rows
-+       rts
+@rts:   rts
 
 ;;        pha                     ; store result before using hi-bytes
 ;;        txa                     ; get input row hi-byte
@@ -215,9 +227,9 @@ col_to_screen:
 ; note that `set_col` must have been
 ; called prior for this to work properly
 ;
-; in:   A       sheet-col
-; out:  carry   clear if column is on-screen, set if not visible
-;       A       screen-col the sheet-col can be found on
+; in:   A                       sheet-col
+; out:  carry                   clear if column is on-screen, set if not visible
+;       A                       screen-col the sheet-col can be found on
 ;-------------------------------------------------------------------------------
         sta.w @c+1              ; set sheet-col number to look for
         
@@ -252,9 +264,9 @@ col_to_view:
 ; given a sheet-col, returns which column number
 ; of the View it appears on, if visible:
 ;
-; in:   A       sheet-col
-; out:  carry   clear if col is on-screen, set if not visible
-;       A       View-col the sheet-col can be found on
+; in:   A                       sheet-col
+; out:  carry                   clear if col is on-screen, set if not visible
+;       A                       View-col the sheet-col can be found on
 ;-------------------------------------------------------------------------------
         ; is the sheet-col within the View's scroll-offset?
         sec
@@ -307,9 +319,9 @@ cursor_up:
         ; TODO: when we allow panning the view without moving the cursor,
         ; then we must snap the view to the cursor if it is outside the view
         ;
-        lda zp_view.sel.row_lo
++       lda zp_view.sel.row_lo
         ldx zp_view.sel.row_hi
-+       jsr row_to_view         ; get the relative position of the cursor
+        jsr row_to_view         ; get the relative position of the cursor
 ;;      bcs @next               ; (skip if cursor is outside view -- how?)
         cmp # 0                 ; cursor on 2nd row of View?
         bne @next
