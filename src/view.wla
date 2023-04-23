@@ -26,25 +26,25 @@
 .ENDST
 
 .RAMSECTION "ZP_VIEWS"  SLOT "ZP"       RETURNORG
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         zp_view         INSTANCEOF View
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 .RAMSECTION "ZP_COPY"   SLOT "ZP"       RETURNORG
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; a destination pointer for copying screen rows
         zp_screen_dest  ADDR
         ; a destination pointer for copying colour-RAM rows
         zp_colour_dest  ADDR
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 .RAMSECTION "ZP_COL"    SLOT "ZP"       RETURNORG
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; temporary byte for adding column widths
         zp_w            BYTE
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 
@@ -56,6 +56,12 @@ init_view:
         tax
         jsr set_row             ; set View's top-most row to 0 (A & X)
         jsr set_col             ; set View's left-most col to "A" (X)
+
+        lda # <250
+        ldx # >250
+        jsr set_row
+        lda # 0
+        tax
 
         ; set starting position of the cell cursor
         stx zp_view.sel.col
@@ -289,7 +295,7 @@ cursor_up:
         bne +                   ; any non-zero hi-byte implies row > 0
         lda zp_view.sel.row_lo  ; is the row lo-byte zero?
         bne ++                  ; if both hi-byte and lo-byte zero,
-        rts                     ;  cannot move cursor up
+--      rts                     ;  cannot move cursor up
 
         ; move the cursor up one row:
         ;-----------------------------------------------------------------------
@@ -344,7 +350,7 @@ cursor_down:
         cpx #> (ZS_ROWS_MAX-1)  ; maximum row number, hi-byte
         bne +                   ; if hi-bytes don't match cannot be at last row
         cmp #< (ZS_ROWS_MAX-1)  ; hi-bytes match, do lo-bytes match? 
-        beq -                   ; cannot move cursor down
+        beq --                  ; cannot move cursor down
 
         ; move cursor to next sheet-row:
         ;
@@ -492,8 +498,8 @@ cursor_right:
 @rts:   rts
 
 
-.SECTION "COPYROWS_TABLE" BITWINDOW 8
-;###############################################################################
+.SECTION "COPYROWS_TABLE"       BITWINDOW 8
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .DEF    _ROWS_PER_ITER  floor( 256 / SYS_SCREEN_COLS )
 
 ;;copy_rows_index:
@@ -521,5 +527,5 @@ copy_rows_remainder:
         .BYTE (R+1) * SYS_SCREEN_COLS # _ROWS_PER_ITER * SYS_SCREEN_COLS
 .ENDR
 
-;###############################################################################
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS

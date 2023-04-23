@@ -6,24 +6,25 @@
 ;
 
 .RAMSECTION "ZP_TEMP"   SLOT "ZP"       RETURNORG
-        ;-----------------------------------------------------------------------
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; a temporary value available for conversions
         zp_temp         .WORD
         zp_temp1         DB
         zp_temp2         DB
         ; output value
         zp_word         WORD
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 .RAMSECTION "ZP_BUFFER" SLOT "ZP" RETURNORG
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; in order to clip cell contents against column widths and screen edges
         ; a buffer is used to prepare cell contents before copying to screen
         ; (it would be laborious to check clipping for every char printed)
         zp_buffer       DSB ZS_COL_WIDTH_MAX
         ; this is the current cursor position within the print buffer
         zp_index        BYTE
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 
@@ -174,6 +175,39 @@ print_number_word:
         rts
 
 
+print_number_small:
+;===============================================================================
+; prints a space-padded decimal number limited to 3-digits (999):
+;
+; in:   A       lo-byte of number
+;       X       hi-byte, limited to $03 ($03E7 = 999)
+;       Y       screen column to begin printing at
+; out:  Y       the screen offset is moved forward
+;               by the number of printed chars
+;       A, X    (clobbered)
+;-------------------------------------------------------------------------------
+        cpx # 0                 ; if the hi-byte is 0,
+        beq print_number_byte   ;  skip to usual 1-byte routine
+
+        ; it's necessary that the temporary decimal digit we're calculating
+        ; is in X, so we have to do a switcheroo here without clobbering A
+        ;
+        sty.w @y+1              ; preserve Y, we need to use it temporarily
+        stx.w @hi+1
+@hi     ldy # $00               ; use Y for hi-byte
+
+        sec
+        ldx # '0'-1             ; increment using a screen-code digit!
+-       inx                     ; increment hundreds-digit,
+        sbc # 100               ; for each 100 decimal subtracted
+        bcs -                   ; keep going?
+        dey                     ; when carry occurs, decrement hi-byte
+        bpl -                   ; if hi-byte still not 0, keep subtracting
+
+@y      ldy # $00               ; restore Y for printing digit
+        bcc ++                  ; jump into digit printing (always branches) 
+
+
 print_number_byte:
 ;===============================================================================
 ; print a single byte value as a space-padded decimal:
@@ -187,11 +221,8 @@ print_number_byte:
 ;       Y       offset from `zp_screen` to print at
 ; out:  Y       the screen offset is moved forward
 ;               by the number of printed chars
-;       X       (preserved)
-;       A       (clobbered)
+;       A, X    (clobbered)
 ;-------------------------------------------------------------------------------
-        stx.w @ldx+1            ; preserve X
-
         ; hundreds:
         ;-----------------------------------------------------------------------
         sec
@@ -199,7 +230,7 @@ print_number_byte:
 -       inx                     ; increment hundreds-digit,
         sbc # 100               ; for each 100 decimal subtracted
         bcs -                   ; keep going?
-        pha                     ; (put aside the remainder)
+++      pha                     ; (put aside the remainder)
 
         ; we compare with "1" instead of "0" so that carry is clear for "0"
         ; and set for "1"-"9". we slide this into the flag byte to indicate
@@ -244,7 +275,6 @@ print_number_byte:
         sta [zp_screen], y      ; print the digit
         iny                     ; move to the next screen col
 
-@ldx    ldx # $00               ; restore X
         rts
 
 @flag:  .BYTE %00000000
@@ -346,7 +376,7 @@ fast_colour:                                                            ;+6=6
 ; NOTE: this section *must* be aligned to a 256-byte page!
 ;
 .SECTION "fast_write"           ALIGN 256       RETURNORG
-;###############################################################################
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 spaces_chars:
 ;===============================================================================
 @chr40: sta [zp_screen], y                                              ;+6
@@ -567,5 +597,5 @@ colour_table:
         .BYTE   <colour_chars@chr35,    <colour_chars@chr36
         .BYTE   <colour_chars@chr37,    <colour_chars@chr38
         .BYTE   <colour_chars@chr39,    <colour_chars@chr40
-;###############################################################################
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS

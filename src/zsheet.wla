@@ -9,14 +9,15 @@
 .ENDIF
 
 
-.RAMSECTION "ZP_REG"    SLOT "ZP"       RETURNORG
-        ;-----------------------------------------------------------------------
+.RAMSECTION "ZP_REG"            SLOT "ZP" RETURNORG
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; temporary locations for backing up registers;
         ; cannot be nested, so should only be used within
         ; routines that do not call any other routines
         zp_a            BYTE
         zp_x            BYTE
         zp_y            BYTE
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 ;===============================================================================
@@ -24,11 +25,11 @@
 .DEF    ZS_COL_WIDTH_MIN        2
 .DEF    ZS_COL_WIDTH_MAX        32
 .DEF    ZS_COL_WIDTH_DEFAULT    5
-.DEF    ZS_ROWS_MAX             300
+.DEF    ZS_ROWS_MAX             999
 
 
 .SLOT   "CODE"
-;###############################################################################
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
 init:
         jmp zsheet_init

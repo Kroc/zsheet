@@ -3,24 +3,28 @@
 ; how you please as long as you retain the copyright notice
 ;
 .RAMSECTION "ZP_SCREEN" SLOT "ZP" RETURNORG
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; a vector specifically for putting characters to screen
         ; -- this is always the current drawing address on screen
         zp_screen       WORD
         ; as with `zp_screen` this is the position in colour RAM.
         ; the two are kept in sync when using `bump_addr`
         zp_colour       WORD
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 .RAMSECTION "ZP_MODE"   SLOT "ZP" RETURNORG
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         ; a bitmask ORed with characters before being printed;
         ; use %10000000 ($80) for reverse-video and %01000000 to force capitals
         zp_print_mask   BYTE
         ; current printing colour
         zp_print_colour BYTE
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 .RAMSECTION "ZP_DRAWRC" SLOT "ZP" RETURNORG
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         zp_draw         INSTANCEOF Rc
         ; during drawing of column & row headers and cells, these are flags
         ; used to indicate if the selection is within the current column/row
@@ -28,7 +32,7 @@
         zp_row_sel      BYTE
         ; counter when drawing multiple rows or columns
         zp_c            BYTE
-;///////////////////////////////////////////////////////////////////////////////
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 
@@ -36,7 +40,7 @@
 ; addresses for each screen row:
 ;
 .SECTION "ZS_SCREEN_ADDR" BITWINDOW 8
-;###############################################################################
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
 screen_addrs:
 ;===============================================================================
@@ -58,7 +62,7 @@ colour_addrs_hi:
         .BYTE >($d800 + R * SYS_SCREEN_COLS)
 .ENDR
 
-;###############################################################################
+;:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 .ENDS
 
 
@@ -589,12 +593,12 @@ draw_row_number:
 ;-------------------------------------------------------------------------------
         lda # %10000000         ; enable reverse video for row number
         sta zp_print_mask
-        
-        ; TODO: extend to 4-digits
-        lda zp_draw.row_lo
-        jmp print_number_byte
 
--       rts
+        lda zp_draw.row_lo
+        ldx zp_draw.row_hi
+        jmp print_number_small
+
+--      rts
 
 
 draw_column:
@@ -607,7 +611,7 @@ draw_column:
 ;-------------------------------------------------------------------------------
         sta zp_draw.col         ; set drawing column reference
         jsr col_to_screen       ; get screen x-pos for the sheet column in View
-        bcs -                   ; (if not on screen, quit early)
+        bcs --                  ; (if not on screen, quit early)
         tay                     ; put to Y, our screen-col drawing position
         
         ; after each cell is printed we need to return to the same
