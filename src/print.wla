@@ -210,15 +210,16 @@ print_number_small:
 
 print_number_byte:
 ;===============================================================================
-; print a single byte value as a space-padded decimal:
+; prints a space-padded decimal number limited to 3-digits (999):
 ; (3 characters are always printed)
 ;
 ; this routine for converting a byte to decimal digits is adapted from:
 ; <https://codebase64.org/doku.php?id=base:tiny_.a_to_ascii_routine>,
 ; Kroc added the space-padding
 ;
-; in:   A       binary number 0-255 to print in decimal
-;       Y       offset from `zp_screen` to print at
+; in:   A       lo-byte of number
+;       X       hi-byte, limited to $03 ($03E7 = 999)
+;       Y       screen column to begin printing at
 ; out:  Y       the screen offset is moved forward
 ;               by the number of printed chars
 ;       A, X    (clobbered)
@@ -230,22 +231,16 @@ print_number_byte:
 -       inx                     ; increment hundreds-digit,
         sbc # 100               ; for each 100 decimal subtracted
         bcs -                   ; keep going?
-++      pha                     ; (put aside the remainder)
 
         ; we compare with "1" instead of "0" so that carry is clear for "0"
         ; and set for "1"-"9". we slide this into the flag byte to indicate
         ; later whether the middle digit should be a space or a number
         ;
-        txa                     ; get hundreds-digit:
-        cmp # '1'               ; is it a zero?
+++      cpx # '1'               ; is hundreds-digit a zero?
         bcs +
-        lda # ' '               ; no hundreds digit: use a space instead
-+       ora zp_print_mask       ; apply reverse-video mode, if enabled
-        sta [zp_screen], y      ; print the digit
-        iny                     ; move to the next screen col
-
+        ldx # ' '               ; no hundreds digit: use a space instead
++       stx.w @huns+1
         ror.w @flag             ; (store carry in bit 7 and clear carry!)
-        pla                     ; retrieve the working remainder
 
         ; tens:
         ;-----------------------------------------------------------------------
@@ -254,22 +249,30 @@ print_number_byte:
         adc # 10                ; for each 10 decimal subtracted
         bmi -                   ; keep going?
 
-        adc # '0'-1             ; make it an ASCII numeral
-        pha                     ; (put aside the remainder!)
-
-        txa                     ; get tens-digit:
         rol.w @flag             ; retrieve flag to indicate padding or not
         bcs +                   ; carry set means there was a hundreds digit
                                 ; so we should print a literal "0"
-        cmp # '0'               ; is the digit a zero?
+        cpx # '0'               ; is the digit a zero?
         bne +                   ; if not, no padding needed,
-        lda # ' '               ; otherwise use padding instead
-+       ora zp_print_mask       ; apply reverse-video, if enabled
-        sta [zp_screen], y      ; print the digit
-        iny                     ; move to the next screen col
+        ldx # ' '               ; otherwise use padding instead
 
         ; ones:
         ;-----------------------------------------------------------------------
++       adc # '0'-1             ; make it an ASCII numeral
+        pha                     ; put aside remainder
+
+        ; print:
+        ;-----------------------------------------------------------------------
+@huns   lda # ' '               ; 100s digit
+        ora zp_print_mask       ; apply reverse-video, if enabled
+        sta [zp_screen], y      ; print the digit
+        iny                     ; move to the next screen col
+
+        txa                     ; retrieve 10s digit
+        ora zp_print_mask       ; apply reverse-video, if enabled
+        sta [zp_screen], y      ; print the digit
+        iny                     ; move to the next screen col
+        
         pla                     ; retrieve the 1s-digit
         ora zp_print_mask       ; apply reverse-video, if enabled
         sta [zp_screen], y      ; print the digit
