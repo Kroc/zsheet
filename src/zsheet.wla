@@ -25,7 +25,7 @@
 .DEF    ZS_COL_WIDTH_MIN        2
 .DEF    ZS_COL_WIDTH_MAX        32
 .DEF    ZS_COL_WIDTH_DEFAULT    5
-.DEF    ZS_ROWS_MAX             999
+.DEF    ZS_ROWS_MAX             1000
 
 
 .SLOT   "CODE"

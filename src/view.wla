@@ -57,12 +57,6 @@ init_view:
         jsr set_row             ; set View's top-most row to 0 (A & X)
         jsr set_col             ; set View's left-most col to "A" (X)
 
-        lda # <250
-        ldx # >250
-        jsr set_row
-        lda # 0
-        tax
-
         ; set starting position of the cell cursor
         stx zp_view.sel.col
         stx zp_view.sel.row_lo

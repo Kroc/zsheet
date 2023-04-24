@@ -540,6 +540,8 @@ draw_row:
         ldx # 3                 ; set colour for three cells
         jsr fast_colour         ; set colour first
         ldy # 0                 ; return to the left-edge of the screen
+        lda zp_draw.row_lo      ; row number to print, lo-byte
+        ldx zp_draw.row_hi      ; row number to print, hi-byte
         jsr draw_row_number     ; print the row number
 
         ; reset the column number to where the view
@@ -590,15 +592,77 @@ draw_row:
 
 draw_row_number:
 ;===============================================================================
+; prints a space-padded decimal row number limited to 3-digits (999):
+; (3 characters are always printed)
+;
+; this routine for converting a byte to decimal digits is adapted from:
+; <https://codebase64.org/doku.php?id=base:tiny_.a_to_ascii_routine>,
+; Kroc added the space-padding
+;
+; in:   A       lo-byte of number
+;       X       hi-byte, limited to $03 ($03E7 = 999)
+;       Y       screen column to begin printing at
+; out:  Y       the screen offset is moved forward
+;               by the number of printed chars
+;       A, X    (clobbered)
 ;-------------------------------------------------------------------------------
-        lda # %10000000         ; enable reverse video for row number
-        sta zp_print_mask
+        ; hundreds:
+        ;-----------------------------------------------------------------------
+        stx zp_x                ; hi-byte to decrement
+        ldx # $80|'0'-1         ; increment using a screen-code digit!
+--      sec                     ; (clear borrow for subtraction)
+-       inx                     ; increment hundreds-digit,
+        sbc # 100               ; for each 100 decimal subtracted
+        bcs -                   ; keep going?
+        dec zp_x                ; when borrow occurs, decrement hi-byte      
+        bpl --                 ;  and keep subtracting until underflow 
 
-        lda zp_draw.row_lo
-        ldx zp_draw.row_hi
-        jmp print_number_small
+        ; we compare with "1" instead of "0" so that carry is clear for "0"
+        ; and set for "1"-"9". we slide this into the flag byte to indicate
+        ; later whether the middle digit should be a space or a number
+        ;
+        cpx # $80|'1'           ; is hundreds-digit a zero?
+        bcs +
+        ldx # $80|' '           ; no hundreds digit: use a space instead
++       stx zp_x                ; put aside hundreds-digit until printing
+        ror.w @flag             ; (store carry in bit 7 and clear carry!)
+
+        ; tens:
+        ;-----------------------------------------------------------------------
+        ldx # $80|'9'+1         ; decrement using an ASCII digit!
+-       dex                     ; decrement the tens-digit,
+        adc # 10                ; for each 10 decimal subtracted
+        bmi -                   ; keep going?
+
+        ; ones:
+        ;-----------------------------------------------------------------------
+        adc # $80|'0'-1         ; make it an ASCII numeral
+        pha                     ; put aside for printing
+
+        ; print:
+        ;-----------------------------------------------------------------------
+        rol.w @flag             ; retrieve flag to indicate padding or not
+        bcs +                   ; carry set means there was a hundreds digit
+                                ; so we should print a literal "0"
+        cpx # $80|'0'           ; is the digit a zero?
+        bne +                   ; if not, no padding needed,
+        ldx # $80|' '           ; otherwise use padding instead
+        
++       lda zp_x                ; retrieve 100s digit
+        sta [zp_screen], y      ; print the digit
+        iny                     ; move to the next screen col
+
+        txa                     ; retrieve 10s digit
+        sta [zp_screen], y      ; print the digit
+        iny                     ; move to the next screen col
+        
+        pla                     ; retrieve the 1s-digit
+        sta [zp_screen], y      ; print the digit
+        iny                     ; move to the next screen col
 
 --      rts
+
+@flag:  .BYTE %00000000
 
 
 draw_column:
